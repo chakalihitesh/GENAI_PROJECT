@@ -1,9 +1,28 @@
-from fastapi import FastAPI, File, HTTPException, UploadFile
+import os
+import asyncio
+import re
+import shutil
+import subprocess
+from pathlib import Path
+import httpx
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from config import REPOSITORIES_DIR
-from repository.manager import (save_uploaded_repository, get_supported_files,)
+from config import REPOSITORIES_DIR, FRONTEND_DIR, DATA_DIR
+from repository.manager import (
+    save_uploaded_repository,
+    get_supported_files,
+    create_repository_id,
+    is_safe_zip_path,
+    IGNORED_DIRECTORIES,
+    get_repository_info,
+    extract_repository,
+    summarize_languages,
+    inspect_env_files,
+    parse_dependency_manifests,
+)
 from rag.embedding_service import EmbeddingService
 from rag.vector_store import VectorStore
 from rag.search_service import SearchService
@@ -40,7 +59,10 @@ app.add_middleware(
     allow_origins=[
         "http://127.0.0.1:5500",
         "http://localhost:5500",
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
     ],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -87,7 +109,7 @@ class SearchRequest(BaseModel):
 # ROOT / HEALTH
 # ============================================================
 
-@app.get("/")
+@app.get("/api")
 def root():
     return {
         "message": "CodeLens AI backend is running.",
@@ -101,6 +123,64 @@ def health():
         "status": "healthy",
         "service": "CodeLens AI",
     }
+
+
+
+@app.get("/health/groq")
+@app.get("/api/health/groq")
+def health_groq():
+    """
+    Verification endpoint for the Groq integration.
+    Sends a minimal ping and returns status without leaking API keys.
+    """
+    try:
+        if not llm_service.client:
+            api_key = os.getenv("GROQ_API_KEY")
+            if not api_key:
+                return {
+                    "status": "error",
+                    "service": "groq",
+                    "message": "GROQ_API_KEY is not configured in environment or .env file.",
+                }
+            from groq import Groq
+            llm_service.client = Groq(api_key=api_key)
+
+        model_to_test = llm_service.PRIMARY_MODEL
+        response = llm_service.client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Respond with the single word 'ready'.",
+                }
+            ],
+            model=model_to_test,
+            max_tokens=60,
+        )
+
+        reply = response.choices[0].message.content.strip() if response.choices else ""
+
+        return {
+            "status": "healthy",
+            "service": "groq",
+            "model": model_to_test,
+            "response": reply[:50],
+            "message": "Groq API integration verified successfully.",
+        }
+
+    except Exception as exc:
+        err_text = str(exc)
+        if "gsk_" in err_text:
+            err_text = "Authentication failed. Check GROQ_API_KEY in .env."
+
+        return {
+            "status": "error",
+            "service": "groq",
+            "message": f"Groq check failed: {err_text}",
+        }
+
+
+
+
 
 
 # ============================================================
@@ -166,6 +246,185 @@ async def upload_repository(
                 f"{str(exc)}"
             ),
         )
+
+class GitHubImportRequest(BaseModel):
+    url: str
+    branch: str | None = None
+
+
+# ============================================================
+# FOLDER UPLOAD
+# ============================================================
+
+@app.post("/api/repositories/upload-folder")
+async def upload_folder(
+    files: list[UploadFile] = File(...),
+    paths: list[str] = Form(...),
+):
+    """
+    Upload a local project folder directly with relative file paths.
+    """
+    if not files or not paths:
+        raise HTTPException(
+            status_code=400,
+            detail="No folder files were provided.",
+        )
+
+    repository_id = create_repository_id()
+    repository_path = REPOSITORIES_DIR / repository_id
+    repository_path.mkdir(parents=True, exist_ok=True)
+
+    try:
+        saved_files_count = 0
+        for upload_file, rel_path in zip(files, paths):
+            clean_rel = rel_path.strip().lstrip("/\\")
+            if not clean_rel:
+                continue
+
+            if not is_safe_zip_path(repository_path, clean_rel):
+                continue
+
+            normalized_parts = Path(clean_rel.replace("\\", "/")).parts
+            if any(part in IGNORED_DIRECTORIES for part in normalized_parts):
+                continue
+
+            target_path = repository_path / clean_rel
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(target_path, "wb") as destination:
+                while chunk := await upload_file.read(1024 * 1024):
+                    destination.write(chunk)
+            saved_files_count += 1
+
+        if saved_files_count == 0:
+            raise ValueError("No supported files found in the uploaded folder.")
+
+        repository_info = get_repository_info(repository_path)
+        return {
+            "message": "Folder uploaded successfully.",
+            "repository_id": repository_id,
+            "repository": repository_info,
+        }
+
+    except Exception as exc:
+        if repository_path.exists():
+            shutil.rmtree(repository_path, ignore_errors=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process uploaded folder: {str(exc)}",
+        )
+
+
+# ============================================================
+# GITHUB REPOSITORY IMPORT
+# ============================================================
+
+@app.post("/api/repositories/github")
+async def import_github_repository(payload: GitHubImportRequest):
+    """
+    Import a repository directly from a public HTTPS GitHub URL.
+    Validates URL format, downloads the archive, and routes through
+    the exact same safe extraction/indexing pipeline as ZIP uploads.
+    """
+    url = (payload.url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="GitHub URL is required.")
+
+    # Strict HTTPS GitHub URL validation
+    # Format: https://github.com/owner/repo or https://github.com/owner/repo/tree/branch
+    match = re.match(
+        r"^https://github\.com/([a-zA-Z0-9_.-]+)/([a-zA-Z0-9_.-]+?)(?:\.git)?(?:/(?:tree|commits)/([a-zA-Z0-9_.-]+))?/?$",
+        url
+    )
+    if not match:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid GitHub repository URL. Must be an HTTPS URL such as https://github.com/owner/repository."
+        )
+
+    owner = match.group(1)
+    repo = match.group(2)
+    branch = payload.branch or match.group(3)
+
+    repository_id = create_repository_id()
+    repository_path = REPOSITORIES_DIR / repository_id
+    zip_path = DATA_DIR / "uploads" / f"{repository_id}.zip"
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+
+    branches_to_try = [branch] if branch else ["main", "master"]
+    downloaded = False
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=90.0) as client:
+            for b in branches_to_try:
+                zip_url = f"https://codeload.github.com/{owner}/{repo}/zip/refs/heads/{b}"
+                resp = await client.get(zip_url)
+                if resp.status_code == 200:
+                    zip_path.write_bytes(resp.content)
+                    downloaded = True
+                    break
+
+        if not downloaded:
+            raise HTTPException(
+                status_code=404,
+                detail="GitHub repository was not found, is private, or specified branch does not exist."
+            )
+
+        # Send downloaded archive through the exact same safe extraction pipeline
+        extract_repository(
+            zip_path=str(zip_path),
+            repository_id=repository_id
+        )
+
+        repository_info = get_repository_info(repository_path)
+        return {
+            "message": "Repository imported successfully from GitHub.",
+            "repository_id": repository_id,
+            "repository": repository_info,
+        }
+
+    except HTTPException:
+        if repository_path.exists():
+            shutil.rmtree(repository_path, ignore_errors=True)
+        raise
+
+    except Exception as exc:
+        if repository_path.exists():
+            shutil.rmtree(repository_path, ignore_errors=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process GitHub repository: {str(exc)}"
+        )
+
+    finally:
+        if zip_path.exists():
+            try:
+                zip_path.unlink()
+            except OSError:
+                pass
+
+
+# ============================================================
+# REPOSITORY SUMMARY (LANGUAGES, DEPS, SAFE ENV)
+# ============================================================
+
+@app.get("/api/repositories/{repository_id}/summary")
+def get_repository_summary(repository_id: str):
+    """
+    Return language summary, dependency manifests, and safe environment inventory.
+    Secrets are always redacted.
+    """
+    repository_path = REPOSITORIES_DIR / repository_id
+    if not repository_path.exists():
+        raise HTTPException(status_code=404, detail="Repository not found.")
+
+    return {
+        "repository_id": repository_id,
+        "language_summary": summarize_languages(repository_path),
+        "dependency_manifests": parse_dependency_manifests(repository_path),
+        "environment_files": inspect_env_files(repository_path),
+    }
+
 
 # ============================================================
 # REPOSITORY OVERVIEW
@@ -472,7 +731,7 @@ def get_repository_apis(
     try:
 
         analyzer = APIAnalyzer(
-            repository_path
+            repository_id
         )
 
         result = analyzer.analyze()
@@ -1142,6 +1401,14 @@ def ask_repository(
 
 
 # ============================================================
+# STATIC FILES (FRONTEND)
+# ============================================================
+
+if FRONTEND_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+
+
+# ============================================================
 # STARTUP
 # ============================================================
 
@@ -1150,9 +1417,9 @@ def startup_event():
 
     print("")
     print("=" * 60)
-    print("CodeLens AI backend started")
-    print("API: http://127.0.0.1:8000")
-    print("Docs: http://127.0.0.1:8000/docs")
-    print("Frontend: http://127.0.0.1:5500")
+    print("CodeLens AI started successfully!")
+    print("Live Application URL: http://127.0.0.1:8000")
+    print("API Documentation:    http://127.0.0.1:8000/docs")
+    print("Frontend Port 5500:   http://127.0.0.1:5500 (if running separately)")
     print("=" * 60)
     print("")

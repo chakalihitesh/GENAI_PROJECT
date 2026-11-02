@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import chromadb
+from chromadb.config import Settings
 
 from config import CHROMA_DIR
 
@@ -41,6 +42,7 @@ class VectorStore:
 
         self.client = (
             chromadb.PersistentClient(
+                settings=Settings(anonymized_telemetry=False),
                 path=str(
                     self.chroma_path
                 )

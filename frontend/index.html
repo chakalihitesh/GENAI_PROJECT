@@ -469,6 +469,45 @@
 
                     </div>
 
+                    <!-- Detected Tech Stack Badges -->
+                    <div class="repo-tech-stack" id="repoTechStack" hidden>
+                        <span class="tech-stack-label">Detected Stack:</span>
+                        <div class="tech-badge-container" id="techBadgeContainer"></div>
+                    </div>
+
+                    <!-- Repository Intelligence Panel (Languages, Dependencies, Safe Env) -->
+                    <div class="repo-insights-panel" id="repoInsightsPanel" hidden>
+                        <!-- Language Summary -->
+                        <div class="insight-block" id="blockLanguages">
+                            <div class="insight-title">
+                                <i data-lucide="code"></i>
+                                <strong>Language Summary</strong>
+                                <span class="insight-count" id="sourceFileCountBadge">0 files</span>
+                            </div>
+                            <div class="language-bars" id="languageBarsContainer"></div>
+                        </div>
+
+                        <!-- Dependency Overview -->
+                        <div class="insight-block" id="blockDependencies">
+                            <div class="insight-title">
+                                <i data-lucide="package"></i>
+                                <strong>Dependency Overview</strong>
+                                <span class="insight-count" id="manifestCountBadge">0 manifests</span>
+                            </div>
+                            <div class="dependency-manifest-list" id="dependencyManifestList"></div>
+                        </div>
+
+                        <!-- Safe Environment Inventory -->
+                        <div class="insight-block" id="blockEnvironment">
+                            <div class="insight-title">
+                                <i data-lucide="key-round"></i>
+                                <strong>Environment Inventory</strong>
+                                <span class="safe-badge"><i data-lucide="shield-check"></i> Values Redacted</span>
+                            </div>
+                            <div class="env-file-list" id="envFileList"></div>
+                        </div>
+                    </div>
+
                 </div>
 
 
@@ -957,49 +996,101 @@
             </h2>
 
             <p>
-                Upload a ZIP archive of your project and start exploring
-                it with natural-language questions.
+                Upload a ZIP archive, choose a project folder, or enter a GitHub repository URL.
             </p>
 
+            <!-- Mode Selector Tabs -->
+            <div class="upload-tabs" id="uploadTabs">
+                <button class="upload-tab active" type="button" data-tab="zip" id="tabBtnZip">
+                    <i data-lucide="file-archive"></i> ZIP File
+                </button>
+                <button class="upload-tab" type="button" data-tab="folder" id="tabBtnFolder">
+                    <i data-lucide="folder-code"></i> Project Folder
+                </button>
+                <button class="upload-tab" type="button" data-tab="github" id="tabBtnGithub">
+                    <i data-lucide="git-branch"></i> GitHub URL
+                </button>
+            </div>
 
-            <label
-                class="upload-zone"
-                for="repositoryFile"
-                id="uploadZone"
-            >
-
-                <input
-                    type="file"
-                    id="repositoryFile"
-                    accept=".zip"
-                    hidden
+            <!-- Tab 1: ZIP Upload -->
+            <div class="tab-panel" id="tabPanelZip">
+                <label
+                    class="upload-zone"
+                    for="repositoryFile"
+                    id="uploadZone"
                 >
+                    <input
+                        type="file"
+                        id="repositoryFile"
+                        accept=".zip"
+                        hidden
+                    >
+                    <span class="upload-zone-icon">
+                        <i data-lucide="folder-up"></i>
+                    </span>
+                    <strong>Drop your ZIP here</strong>
+                    <span>or click to browse</span>
+                    <small>ZIP archives only (.zip)</small>
+                </label>
+            </div>
 
-                <span class="upload-zone-icon">
-                    <i data-lucide="folder-up"></i>
-                </span>
+            <!-- Tab 2: Folder Upload -->
+            <div class="tab-panel" id="tabPanelFolder" hidden>
+                <label
+                    class="upload-zone"
+                    for="repositoryFolder"
+                    id="uploadFolderZone"
+                >
+                    <input
+                        type="file"
+                        id="repositoryFolder"
+                        webkitdirectory
+                        directory
+                        multiple
+                        hidden
+                    >
+                    <span class="upload-zone-icon">
+                        <i data-lucide="folder-code"></i>
+                    </span>
+                    <strong>Select project folder</strong>
+                    <span>or click to browse local directories</span>
+                    <small>Full source tree uploaded safely</small>
+                </label>
+            </div>
 
-                <strong>
-                    Drop your ZIP here
-                </strong>
-
-                <span>
-                    or click to browse
-                </span>
-
-                <small>
-                    ZIP archives only
-                </small>
-
-            </label>
-
+            <!-- Tab 3: GitHub URL -->
+            <div class="tab-panel" id="tabPanelGithub" hidden>
+                <div class="github-upload-zone">
+                    <div class="input-with-icon">
+                        <i data-lucide="globe"></i>
+                        <input
+                            type="url"
+                            id="githubRepoUrl"
+                            class="text-input"
+                            placeholder="https://github.com/owner/repository"
+                        >
+                    </div>
+                    <div class="input-with-icon">
+                        <i data-lucide="git-branch"></i>
+                        <input
+                            type="text"
+                            id="githubRepoBranch"
+                            class="text-input"
+                            placeholder="Branch (optional, e.g. main)"
+                        >
+                    </div>
+                    <small class="helper-text">
+                        Public GitHub repositories are cloned and indexed automatically.
+                    </small>
+                </div>
+            </div>
 
             <div
                 class="selected-file"
                 id="selectedFile"
                 hidden
             >
-                <i data-lucide="file-archive"></i>
+                <i data-lucide="file-archive" id="selectedFileIcon"></i>
 
                 <div>
                     <strong id="selectedFileName">
@@ -1020,6 +1111,22 @@
                 </button>
             </div>
 
+            <!-- Live Indexing Progress -->
+            <div class="indexing-progress-container" id="indexingProgressContainer" hidden>
+                <div class="indexing-progress-header">
+                    <span id="indexingProgressMessage">Preparing repository...</span>
+                    <strong id="indexingProgressPercent">0%</strong>
+                </div>
+                <div class="indexing-progress-bar">
+                    <div class="indexing-progress-fill" id="indexingProgressFill" style="width: 0%"></div>
+                </div>
+                <div class="indexing-progress-stages">
+                    <span class="stage-pill" id="stageScanning">1. Scan</span>
+                    <span class="stage-pill" id="stageChunking">2. Chunk</span>
+                    <span class="stage-pill" id="stageEmbedding">3. Embed</span>
+                    <span class="stage-pill" id="stageIndexing">4. Index</span>
+                </div>
+            </div>
 
             <button
                 class="primary-button full-width"

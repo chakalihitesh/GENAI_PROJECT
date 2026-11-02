@@ -1,4 +1,4 @@
-const CODELENS_API_BASE = "http://127.0.0.1:8000";
+const CODELENS_API_BASE = (window.location.port === "8000" || window.location.port === "") ? "" : "http://127.0.0.1:8000";
 const CURRENT_REPOSITORY_KEY = "codelens_current_repository";
 const HISTORY_KEY = "codelens_history";
 let selectedRepositoryFile = null;
@@ -169,17 +169,45 @@ function initializeUploadModal() {
     const modal = document.getElementById("uploadModal");
     const openButton = document.getElementById("newProjectButton");
     const closeButton = document.getElementById("closeModal");
+    const analyzeButton = document.getElementById("analyzeRepository");
+
+    // Mode tabs
+    const tabBtnZip = document.getElementById("tabBtnZip");
+    const tabBtnFolder = document.getElementById("tabBtnFolder");
+    const tabBtnGithub = document.getElementById("tabBtnGithub");
+    const tabPanelZip = document.getElementById("tabPanelZip");
+    const tabPanelFolder = document.getElementById("tabPanelFolder");
+    const tabPanelGithub = document.getElementById("tabPanelGithub");
+
+    // Inputs
     const fileInput = document.getElementById("repositoryFile");
+    const folderInput = document.getElementById("repositoryFolder");
     const uploadZone = document.getElementById("uploadZone");
+    const uploadFolderZone = document.getElementById("uploadFolderZone");
+    const githubUrlInput = document.getElementById("githubRepoUrl");
+    const githubBranchInput = document.getElementById("githubRepoBranch");
+
+    // Selection preview
     const selectedFile = document.getElementById("selectedFile");
     const selectedName = document.getElementById("selectedFileName");
     const selectedSize = document.getElementById("selectedFileSize");
+    const selectedIcon = document.getElementById("selectedFileIcon");
     const removeButton = document.getElementById("removeSelectedFile");
-    const analyzeButton = document.getElementById("analyzeRepository");
 
-    if (!modal || !fileInput || !analyzeButton) {
+    // Progress elements
+    const progressContainer = document.getElementById("indexingProgressContainer");
+    const progressFill = document.getElementById("indexingProgressFill");
+    const progressMessage = document.getElementById("indexingProgressMessage");
+    const progressPercent = document.getElementById("indexingProgressPercent");
+
+    if (!modal || !analyzeButton) {
         return;
     }
+
+    let activeMode = "zip";
+    let selectedZip = null;
+    let selectedFolderFiles = [];
+    let selectedGithub = null;
 
     const openModal = () => {
         modal.classList.add("visible");
@@ -188,295 +216,583 @@ function initializeUploadModal() {
 
     const closeModal = () => {
         if (isBusy) return;
-
         modal.classList.remove("visible");
         modal.setAttribute("aria-hidden", "true");
     };
 
-    const resetSelection = () => {
-        selectedRepositoryFile = null;
-        fileInput.value = "";
+    const switchTab = mode => {
+        if (isBusy) return;
+        activeMode = mode;
 
-        if (selectedFile) {
-            selectedFile.hidden = true;
+        [tabBtnZip, tabBtnFolder, tabBtnGithub].forEach(b => b?.classList.remove("active"));
+        [tabPanelZip, tabPanelFolder, tabPanelGithub].forEach(p => {
+            if (p) p.hidden = true;
+        });
+
+        if (mode === "zip") {
+            tabBtnZip?.classList.add("active");
+            if (tabPanelZip) tabPanelZip.hidden = false;
+        } else if (mode === "folder") {
+            tabBtnFolder?.classList.add("active");
+            if (tabPanelFolder) tabPanelFolder.hidden = false;
+        } else if (mode === "github") {
+            tabBtnGithub?.classList.add("active");
+            if (tabPanelGithub) tabPanelGithub.hidden = false;
         }
 
-        analyzeButton.disabled = true;
-
-        analyzeButton.innerHTML =
-            '<i data-lucide="scan-search"></i> Analyze repository';
-
+        resetSelection();
         refreshIcons();
     };
 
-    const chooseFile = file => {
-        if (!file) return;
+    tabBtnZip?.addEventListener("click", () => switchTab("zip"));
+    tabBtnFolder?.addEventListener("click", () => switchTab("folder"));
+    tabBtnGithub?.addEventListener("click", () => switchTab("github"));
 
+    const resetSelection = () => {
+        selectedZip = null;
+        selectedFolderFiles = [];
+        selectedGithub = null;
+        selectedRepositoryFile = null;
+
+        if (fileInput) fileInput.value = "";
+        if (folderInput) folderInput.value = "";
+        if (githubUrlInput) githubUrlInput.value = "";
+        if (githubBranchInput) githubBranchInput.value = "";
+
+        if (selectedFile) selectedFile.hidden = true;
+        if (progressContainer) progressContainer.hidden = true;
+
+        analyzeButton.disabled = true;
+        analyzeButton.innerHTML = '<i data-lucide="scan-search"></i> Analyze repository';
+        refreshIcons();
+    };
+
+    const chooseZip = file => {
+        if (!file) return;
         if (!file.name.toLowerCase().endsWith(".zip")) {
             resetSelection();
-
-            showToast(
-                "Please select a ZIP repository.",
-                true
-            );
-
+            showToast("Please select a ZIP archive (.zip).", true);
             return;
         }
 
+        selectedZip = file;
         selectedRepositoryFile = file;
 
-        if (selectedName) {
-            selectedName.textContent = file.name;
-        }
-
-        if (selectedSize) {
-            selectedSize.textContent =
-                formatFileSize(file.size);
-        }
-
-        if (selectedFile) {
-            selectedFile.hidden = false;
-        }
+        if (selectedName) selectedName.textContent = file.name;
+        if (selectedSize) selectedSize.textContent = formatFileSize(file.size);
+        if (selectedIcon) selectedIcon.setAttribute("data-lucide", "file-archive");
+        if (selectedFile) selectedFile.hidden = false;
 
         analyzeButton.disabled = false;
-        analyzeButton.removeAttribute("disabled");
-
         refreshIcons();
     };
 
-    if (openButton) {
-        openButton.addEventListener(
-            "click",
-            openModal
-        );
-    }
+    const chooseFolder = files => {
+        if (!files || !files.length) return;
 
-    if (closeButton) {
-        closeButton.addEventListener(
-            "click",
-            closeModal
-        );
-    }
+        // Filter out ignored dirs for quick client check
+        const validFiles = Array.from(files).filter(f => {
+            const path = f.webkitRelativePath || f.name;
+            return !path.includes("node_modules/") && !path.includes(".git/") && !path.includes("__pycache__/");
+        });
 
-    if (removeButton) {
-        removeButton.addEventListener(
-            "click",
-            resetSelection
-        );
-    }
+        if (!validFiles.length) {
+            showToast("No valid source files found in selected folder.", true);
+            return;
+        }
 
+        selectedFolderFiles = validFiles;
+        const folderName = (files[0].webkitRelativePath || "").split("/")[0] || "Project Folder";
+
+        if (selectedName) selectedName.textContent = folderName;
+        if (selectedSize) selectedSize.textContent = `${validFiles.length} files`;
+        if (selectedIcon) selectedIcon.setAttribute("data-lucide", "folder-code");
+        if (selectedFile) selectedFile.hidden = false;
+
+        analyzeButton.disabled = false;
+        refreshIcons();
+    };
+
+    const checkGithubInput = () => {
+        let url = (githubUrlInput?.value || "").trim();
+        if (url && !url.startsWith("http://") && !url.startsWith("https://") && url.includes("github.com")) {
+            url = "https://" + url.replace(/^www\./, "");
+        }
+        if (url && url.includes("github.com")) {
+            const cleanUrl = url.replace(/\.git$/, "").replace(/\/+$/, "");
+            const parts = cleanUrl.split("/").filter(Boolean);
+            const repoName = parts.length >= 2 ? `${parts[parts.length - 2]}/${parts[parts.length - 1]}` : url;
+
+            selectedGithub = {
+                url: url,
+                branch: (githubBranchInput?.value || "").trim() || null
+            };
+
+            if (selectedName) selectedName.textContent = repoName;
+            if (selectedSize) selectedSize.textContent = "GitHub Remote";
+            if (selectedIcon) selectedIcon.setAttribute("data-lucide", "git-branch");
+            if (selectedFile) selectedFile.hidden = false;
+
+            analyzeButton.disabled = false;
+        } else {
+            selectedGithub = null;
+            if (selectedFile) selectedFile.hidden = true;
+            analyzeButton.disabled = true;
+        }
+        refreshIcons();
+    };
+
+    githubUrlInput?.addEventListener("input", checkGithubInput);
+    githubBranchInput?.addEventListener("input", checkGithubInput);
+
+    if (openButton) openButton.addEventListener("click", openModal);
+    if (closeButton) closeButton.addEventListener("click", closeModal);
+    if (removeButton) removeButton.addEventListener("click", resetSelection);
+
+    // ZIP Click / Drop
     if (uploadZone) {
-        uploadZone.addEventListener(
-            "click",
-            () => fileInput.click()
-        );
+        uploadZone.addEventListener("click", () => fileInput?.click());
+        uploadZone.addEventListener("dragover", e => {
+            e.preventDefault();
+            uploadZone.classList.add("dragging");
+        });
+        uploadZone.addEventListener("dragleave", () => uploadZone.classList.remove("dragging"));
+        uploadZone.addEventListener("drop", e => {
+            e.preventDefault();
+            uploadZone.classList.remove("dragging");
+            chooseZip(e.dataTransfer.files?.[0]);
+        });
     }
 
-    fileInput.addEventListener(
-        "change",
-        event => {
-            chooseFile(
-                event.target.files?.[0]
-            );
-        }
-    );
+    fileInput?.addEventListener("change", e => chooseZip(e.target.files?.[0]));
 
-    if (uploadZone) {
-        uploadZone.addEventListener(
-            "dragover",
-            event => {
-                event.preventDefault();
-                uploadZone.classList.add("dragging");
+    // Folder Click / Drop
+    if (uploadFolderZone) {
+        uploadFolderZone.addEventListener("click", () => folderInput?.click());
+        uploadFolderZone.addEventListener("dragover", e => {
+            e.preventDefault();
+            uploadFolderZone.classList.add("dragging");
+        });
+        uploadFolderZone.addEventListener("dragleave", () => uploadFolderZone.classList.remove("dragging"));
+        uploadFolderZone.addEventListener("drop", e => {
+            e.preventDefault();
+            uploadFolderZone.classList.remove("dragging");
+            if (e.dataTransfer.files?.length) {
+                chooseFolder(e.dataTransfer.files);
             }
-        );
-
-        uploadZone.addEventListener(
-            "dragleave",
-            () => {
-                uploadZone.classList.remove(
-                    "dragging"
-                );
-            }
-        );
-
-        uploadZone.addEventListener(
-            "drop",
-            event => {
-                event.preventDefault();
-
-                uploadZone.classList.remove(
-                    "dragging"
-                );
-
-                chooseFile(
-                    event.dataTransfer.files?.[0]
-                );
-            }
-        );
+        });
     }
 
-    analyzeButton.addEventListener(
-        "click",
-        async () => {
-            if (!selectedRepositoryFile || isBusy) {
-                return;
-            }
+    folderInput?.addEventListener("change", e => chooseFolder(e.target.files));
 
-            await handleRepositoryUpload(
-                selectedRepositoryFile,
-                analyzeButton,
-                closeModal
-            );
-        }
-    );
+    analyzeButton.addEventListener("click", async () => {
+        if (isBusy) return;
 
-    modal.addEventListener(
-        "click",
-        event => {
-            if (event.target === modal) {
-                closeModal();
-            }
-        }
-    );
+        await handleRepositoryProcess({
+            mode: activeMode,
+            zipFile: selectedZip,
+            folderFiles: selectedFolderFiles,
+            githubData: selectedGithub,
+            button: analyzeButton,
+            closeModal: closeModal,
+            progressContainer,
+            progressFill,
+            progressMessage,
+            progressPercent
+        });
+    });
+
+    modal.addEventListener("click", event => {
+        if (event.target === modal) closeModal();
+    });
 }
 
-async function handleRepositoryUpload(
-    file,
-    button,
-    closeModal
-) {
-    isBusy = true;
+function updateStagePills(stage) {
+    const s1 = document.getElementById("stageScanning");
+    const s2 = document.getElementById("stageChunking");
+    const s3 = document.getElementById("stageEmbedding");
+    const s4 = document.getElementById("stageIndexing");
 
+    const clear = () => {
+        [s1, s2, s3, s4].forEach(p => {
+            if (p) {
+                p.classList.remove("active", "done");
+            }
+        });
+    };
+
+    clear();
+
+    if (stage === "scanning") {
+        s1?.classList.add("active");
+    } else if (stage === "chunking") {
+        s1?.classList.add("done");
+        s2?.classList.add("active");
+    } else if (stage === "embedding") {
+        s1?.classList.add("done");
+        s2?.classList.add("done");
+        s3?.classList.add("active");
+    } else if (stage === "indexing") {
+        s1?.classList.add("done");
+        s2?.classList.add("done");
+        s3?.classList.add("done");
+        s4?.classList.add("active");
+    } else if (stage === "completed") {
+        [s1, s2, s3, s4].forEach(p => p?.classList.add("done"));
+    }
+}
+
+async function handleRepositoryProcess(params) {
+    const {
+        mode,
+        zipFile,
+        folderFiles,
+        githubData,
+        button,
+        closeModal,
+        progressContainer,
+        progressFill,
+        progressMessage,
+        progressPercent
+    } = params;
+
+    isBusy = true;
     button.disabled = true;
 
-    button.innerHTML =
-        '<i data-lucide="loader-circle"></i> Uploading...';
+    if (progressContainer) {
+        progressContainer.hidden = false;
+        if (progressFill) progressFill.style.width = "5%";
+        if (progressPercent) progressPercent.textContent = "5%";
+        if (progressMessage) progressMessage.textContent = "Uploading repository content...";
+    }
 
+    button.innerHTML = '<i data-lucide="loader-circle" class="codelens-spinner"></i> Uploading...';
     refreshIcons();
 
+    let uploadData = null;
+    let repoName = "Repository";
+
     try {
-        const formData = new FormData();
+        if (mode === "zip") {
+            if (!zipFile) throw new Error("No ZIP file selected.");
+            repoName = zipFile.name.replace(/\.zip$/i, "");
+            const formData = new FormData();
+            formData.append("file", zipFile);
 
-        formData.append(
-            "file",
-            file
-        );
-
-        const uploadResponse = await fetch(
-            `${CODELENS_API_BASE}/api/repositories/upload`,
-            {
+            const res = await fetch(`${CODELENS_API_BASE}/api/repositories/upload`, {
                 method: "POST",
                 body: formData
+            });
+            uploadData = await readApiResponse(res);
+            if (!res.ok) throw new Error(apiError(uploadData, "Repository upload failed."));
+        } else if (mode === "folder") {
+            if (!folderFiles || !folderFiles.length) throw new Error("No folder files selected.");
+            repoName = (folderFiles[0].webkitRelativePath || "").split("/")[0] || "Project Folder";
+
+            const formData = new FormData();
+            for (const f of folderFiles) {
+                formData.append("files", f);
+                formData.append("paths", f.webkitRelativePath || f.name);
             }
-        );
 
-        const uploadData =
-            await readApiResponse(
-                uploadResponse
-            );
+            const res = await fetch(`${CODELENS_API_BASE}/api/repositories/upload-folder`, {
+                method: "POST",
+                body: formData
+            });
+            uploadData = await readApiResponse(res);
+            if (!res.ok) throw new Error(apiError(uploadData, "Folder upload failed."));
+        } else if (mode === "github") {
+            if (!githubData || !githubData.url) throw new Error("Please enter a valid GitHub URL.");
+            const cleanUrl = githubData.url.replace(/\.git$/, "").replace(/\/+$/, "");
+            const parts = cleanUrl.split("/").filter(Boolean);
+            repoName = parts.length >= 2 ? parts[parts.length - 1] : "GitHub Repo";
 
-        if (!uploadResponse.ok) {
-            throw new Error(
-                apiError(
-                    uploadData,
-                    "Repository upload failed."
-                )
-            );
+            button.innerHTML = '<i data-lucide="loader-circle" class="codelens-spinner"></i> Cloning from GitHub...';
+            refreshIcons();
+            if (progressMessage) progressMessage.textContent = "Cloning repository from GitHub...";
+
+            const res = await fetch(`${CODELENS_API_BASE}/api/repositories/github`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(githubData)
+            });
+            uploadData = await readApiResponse(res);
+            if (!res.ok) throw new Error(apiError(uploadData, "GitHub repository import failed."));
         }
 
-        const repository =
-            uploadData.repository || {};
-
-        const repositoryId =
-            uploadData.repository_id ||
-            repository.repository_id;
+        const repository = uploadData.repository || {};
+        const repositoryId = uploadData.repository_id || repository.repository_id;
 
         if (!repositoryId) {
-            throw new Error(
-                "The backend did not return a repository ID."
-            );
+            throw new Error("Backend did not return a valid repository ID.");
         }
 
         const state = {
             repository_id: repositoryId,
-            name: file.name.replace(
-                /\.zip$/i,
-                ""
-            ),
-            file_count:
-                repository.file_count || 0,
-            files:
-                repository.files || [],
-            file_types:
-                repository.file_types || {},
+            name: repoName,
+            file_count: repository.file_count || 0,
+            files: repository.files || [],
+            file_types: repository.file_types || {},
             updated_at: Date.now()
         };
 
-        button.innerHTML =
-            '<i data-lucide="loader-circle"></i> Indexing...';
+        // Real-time UI preliminary update
+        updateRepositoryUI(state);
 
+        // Start live indexing progress polling
+        let progressPoller = null;
+        let isDone = false;
+
+        const startPolling = () => {
+            progressPoller = setInterval(async () => {
+                if (isDone) return;
+                try {
+                    const pRes = await fetch(`${CODELENS_API_BASE}/api/repositories/${encodeURIComponent(repositoryId)}/progress`);
+                    if (pRes.ok) {
+                        const pData = await pRes.json();
+                        const pct = Math.max(10, pData.progress || 0);
+                        const msg = pData.message || "Indexing...";
+                        const stage = pData.stage || "indexing";
+
+                        if (progressFill) progressFill.style.width = `${pct}%`;
+                        if (progressPercent) progressPercent.textContent = `${pct}%`;
+                        if (progressMessage) progressMessage.textContent = msg;
+
+                        button.innerHTML = `<i data-lucide="loader-circle" class="codelens-spinner"></i> ${msg} (${pct}%)`;
+                        refreshIcons();
+                        updateStagePills(stage);
+                    }
+                } catch (e) {
+                    // ignore polling errors
+                }
+            }, 500);
+        };
+
+        startPolling();
+
+        // Perform Indexing
+        button.innerHTML = '<i data-lucide="loader-circle" class="codelens-spinner"></i> Indexing repository...';
         refreshIcons();
 
         const indexResponse = await fetch(
             `${CODELENS_API_BASE}/api/repositories/${encodeURIComponent(repositoryId)}/index`,
-            {
-                method: "POST"
-            }
+            { method: "POST" }
         );
 
-        const indexData =
-            await readApiResponse(
-                indexResponse
-            );
-                    if (!indexResponse.ok) {
-            throw new Error(
-                apiError(
-                    indexData,
-                    "Repository indexing failed."
-                )
-            );
+        isDone = true;
+        if (progressPoller) clearInterval(progressPoller);
+
+        const indexData = await readApiResponse(indexResponse);
+        if (!indexResponse.ok) {
+            throw new Error(apiError(indexData, "Repository indexing failed."));
         }
 
+        // Finalize Progress Bar
+        updateStagePills("completed");
+        if (progressFill) progressFill.style.width = "100%";
+        if (progressPercent) progressPercent.textContent = "100%";
+        if (progressMessage) progressMessage.textContent = "Repository indexed successfully!";
+
+        button.innerHTML = '<i data-lucide="check"></i> Repository ready';
+        refreshIcons();
+
         saveCurrentRepository(state);
-
         addRepositoryToHistory(state);
-
         updateRepositoryUI(state);
 
-        button.innerHTML =
-            '<i data-lucide="check"></i> Repository ready';
+        // Real-time project detection (tech-stack and overview)
+        fetchAndRenderRepositoryDetails(repositoryId);
 
-        refreshIcons();
+        showToast(`${state.name} is ready to explore.`);
 
-        showToast(
-            `${state.name} is ready to explore.`
-        );
-
-        window.setTimeout(() => {
+        setTimeout(() => {
             closeModal();
-        }, 500);
+            if (progressContainer) progressContainer.hidden = true;
+        }, 900);
 
     } catch (error) {
-        console.error(
-            "Repository upload error:",
-            error
-        );
-
+        console.error("Repository processing error:", error);
         button.disabled = false;
-
-        button.innerHTML =
-            '<i data-lucide="scan-search"></i> Analyze repository';
-
+        button.innerHTML = '<i data-lucide="scan-search"></i> Analyze repository';
         refreshIcons();
-
-        showToast(
-            error.message ||
-            "Could not analyze the repository.",
-            true
-        );
-
+        if (progressContainer) progressContainer.hidden = true;
+        showToast(error.message || "Failed to process repository.", true);
     } finally {
         isBusy = false;
+    }
+}
+
+async function fetchAndRenderRepositoryDetails(repositoryId) {
+    try {
+        const [techRes, overviewRes, summaryRes] = await Promise.allSettled([
+            fetch(`${CODELENS_API_BASE}/api/repositories/${encodeURIComponent(repositoryId)}/technology-stack`),
+            fetch(`${CODELENS_API_BASE}/api/repositories/${encodeURIComponent(repositoryId)}/overview`),
+            fetch(`${CODELENS_API_BASE}/api/repositories/${encodeURIComponent(repositoryId)}/summary`)
+        ]);
+
+        let techStack = null;
+        if (techRes.status === "fulfilled" && techRes.value.ok) {
+            const data = await techRes.value.json();
+            techStack = data.technology_stack || {};
+        }
+
+        let overview = null;
+        if (overviewRes.status === "fulfilled" && overviewRes.value.ok) {
+            const data = await overviewRes.value.json();
+            overview = data.overview || {};
+        }
+
+        let summary = null;
+        if (summaryRes.status === "fulfilled" && summaryRes.value.ok) {
+            summary = await summaryRes.value.json();
+        }
+
+        renderTechStackBadges(techStack, overview);
+        if (summary) {
+            renderRepositoryInsights(summary);
+        }
+    } catch (e) {
+        console.warn("Could not fetch real-time repository details:", e);
+    }
+}
+
+function renderRepositoryInsights(summary) {
+    const panel = document.getElementById("repoInsightsPanel");
+    if (!panel || !summary) return;
+
+    panel.hidden = false;
+
+    // 1. Languages
+    const langContainer = document.getElementById("languageBarsContainer");
+    const fileCountBadge = document.getElementById("sourceFileCountBadge");
+    const langData = summary.language_summary || {};
+    const languages = langData.languages || [];
+
+    if (fileCountBadge) {
+        fileCountBadge.textContent = `${langData.source_file_count || 0} source files`;
+    }
+
+    if (langContainer) {
+        langContainer.innerHTML = "";
+        const langColors = {
+            Python: "#3b82f6",
+            TypeScript: "#38bdf8",
+            JavaScript: "#facc15",
+            HTML: "#f97316",
+            CSS: "#ec4899",
+            Java: "#ef4444",
+            Rust: "#f97316",
+            Go: "#06b6d4"
+        };
+
+        if (languages.length) {
+            languages.slice(0, 5).forEach(l => {
+                const item = document.createElement("div");
+                item.className = "language-item";
+                const color = langColors[l.name] || "#8b5cf6";
+                item.innerHTML = `
+                    <span class="language-name">
+                        <span class="language-dot" style="background: ${color}"></span>
+                        ${l.name}
+                    </span>
+                    <span class="language-count">${l.file_count} files</span>
+                `;
+                langContainer.appendChild(item);
+            });
+        } else {
+            langContainer.innerHTML = '<span class="helper-text">No languages detected</span>';
+        }
+    }
+
+    // 2. Dependency Manifests
+    const depList = document.getElementById("dependencyManifestList");
+    const manifestBadge = document.getElementById("manifestCountBadge");
+    const manifests = summary.dependency_manifests || [];
+
+    if (manifestBadge) {
+        manifestBadge.textContent = `${manifests.length} manifest${manifests.length === 1 ? '' : 's'}`;
+    }
+
+    if (depList) {
+        depList.innerHTML = "";
+        if (manifests.length) {
+            manifests.forEach(m => {
+                const card = document.createElement("div");
+                card.className = "manifest-card";
+                const baseName = m.file.split("/").pop();
+                const chips = (m.dependencies || []).slice(0, 6).map(d =>
+                    `<span class="dep-chip"><strong>${d.name}</strong> ${d.version !== 'unspecified' ? d.version : ''}</span>`
+                ).join("");
+                card.innerHTML = `
+                    <div class="manifest-header">
+                        <i data-lucide="file-text"></i> ${baseName}
+                    </div>
+                    <div class="manifest-deps">${chips}</div>
+                `;
+                depList.appendChild(card);
+            });
+        } else {
+            depList.innerHTML = '<span class="helper-text">No dependency manifests found</span>';
+        }
+    }
+
+    // 3. Safe Environment Inventory
+    const envList = document.getElementById("envFileList");
+    const envFiles = summary.environment_files || [];
+
+    if (envList) {
+        envList.innerHTML = "";
+        if (envFiles.length) {
+            envFiles.forEach(env => {
+                const card = document.createElement("div");
+                card.className = "env-card";
+                const baseName = env.file.split("/").pop();
+                const chips = (env.variable_names || []).map(v =>
+                    `<span class="env-var-chip">${v}</span>`
+                ).join("");
+                card.innerHTML = `
+                    <div class="env-file-name">${baseName}</div>
+                    <div class="env-vars-container">${chips || '<span class="helper-text">No variables found</span>'}</div>
+                `;
+                envList.appendChild(card);
+            });
+        } else {
+            envList.innerHTML = '<span class="helper-text">No environment template files detected</span>';
+        }
+    }
+
+    refreshIcons();
+}
+
+function renderTechStackBadges(techStack, overview) {
+    const container = document.getElementById("techBadgeContainer");
+    const section = document.getElementById("repoTechStack");
+    if (!container || !section) return;
+
+    const badges = new Set();
+    if (techStack) {
+        (techStack.languages || []).forEach(l => badges.add(l));
+        (techStack.frameworks || []).forEach(f => badges.add(f));
+        (techStack.ai_ml || []).forEach(a => badges.add(a));
+        (techStack.databases || []).forEach(d => badges.add(d));
+    }
+    if (overview && overview.languages) {
+        Object.keys(overview.languages).forEach(l => badges.add(l));
+    }
+
+    if (badges.size > 0) {
+        container.innerHTML = "";
+        Array.from(badges).slice(0, 10).forEach(item => {
+            const span = document.createElement("span");
+            span.className = "tech-badge";
+            span.textContent = item;
+            container.appendChild(span);
+        });
+        section.hidden = false;
+
+        const primary = Array.from(badges).slice(0, 3).join(", ");
+        const count = currentRepository?.file_count || 0;
+        setText("currentRepositoryFileCount", `${count} files · ${primary}`);
     }
 }
 
@@ -937,6 +1253,10 @@ function updateRepositoryUI(repository) {
     );
 
     renderHistory();
+
+    if (repository.repository_id) {
+        fetchAndRenderRepositoryDetails(repository.repository_id);
+    }
 }
 
 function setText(id, value) {

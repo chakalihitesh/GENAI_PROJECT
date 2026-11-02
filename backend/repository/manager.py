@@ -1,9 +1,20 @@
+import json
+import re
 import shutil
 import uuid
 import zipfile
+from collections import Counter
 from pathlib import Path
 
-from config import REPOSITORIES_DIR, DATA_DIR
+from config import (
+    REPOSITORIES_DIR,
+    DATA_DIR,
+    MAX_ZIP_FILES,
+    MAX_UNCOMPRESSED_BYTES,
+    MAX_COMPRESSED_BYTES,
+    MAX_SINGLE_FILE_SIZE,
+    MAX_COMPRESSION_RATIO,
+)
 
 
 # ============================================================
@@ -131,6 +142,10 @@ SUPPORTED_EXTENSIONS = {
 IGNORED_FILES = {
     ".ds_store",
     "thumbs.db",
+    ".env",
+    ".env.local",
+    ".env.production",
+    ".env.development",
 }
 
 
@@ -138,21 +153,8 @@ IGNORED_FILES = {
 # LIMITS
 # ============================================================
 
-# We intentionally do NOT impose the old 500 MB ZIP upload limit.
-#
-# The ZIP is streamed directly to disk, so the application does
-# not need to load the entire archive into RAM.
-#
-# These limits protect the application from pathological ZIPs
-# and extremely large individual files.
-#
-# Increase them later if necessary.
-
-MAX_EXTRACTED_REPOSITORY_SIZE = 10 * 1024 * 1024 * 1024
-# 10 GB maximum extracted repository size.
-
-MAX_SINGLE_FILE_SIZE = 500 * 1024 * 1024
-# 500 MB maximum for one individual file.
+MAX_FILES = MAX_ZIP_FILES
+MAX_EXTRACTED_REPOSITORY_SIZE = MAX_UNCOMPRESSED_BYTES
 
 
 # ============================================================
@@ -242,6 +244,118 @@ def is_safe_zip_path(
 # SAFE ZIP EXTRACTION
 # ============================================================
 
+def safe_extract_zip(
+    zip_path: Path,
+    destination: Path,
+) -> None:
+    """
+    Safely extract a ZIP archive with configurable limit and traversal checks.
+    Rejects path traversal, excessive file count, excessive expanded size,
+    and suspicious compression ratios (zip bombs).
+    """
+    destination = Path(destination).resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    zip_path = Path(zip_path)
+
+    if not zip_path.exists():
+        raise FileNotFoundError(f"ZIP file does not exist: {zip_path}")
+
+    # Check compressed archive size
+    compressed_size = zip_path.stat().st_size
+    if compressed_size > MAX_COMPRESSED_BYTES:
+        raise ValueError(
+            f"Uploaded archive size ({compressed_size / (1024 * 1024):.1f} MB) "
+            f"exceeds maximum allowed compressed limit ({MAX_COMPRESSED_BYTES / (1024 * 1024):.0f} MB)."
+        )
+
+    try:
+        with zipfile.ZipFile(zip_path, "r") as archive:
+            members = archive.infolist()
+
+            limit_files = min(MAX_FILES, MAX_ZIP_FILES)
+            if len(members) > limit_files:
+                raise ValueError(
+                    f"ZIP contains too many files ({len(members)} > {limit_files})."
+                )
+
+            total_size = sum(member.file_size for member in members)
+            limit_uncompressed = min(MAX_EXTRACTED_REPOSITORY_SIZE, MAX_UNCOMPRESSED_BYTES)
+            if total_size > limit_uncompressed:
+                raise ValueError(
+                    f"Extracted repository size ({total_size / (1024 * 1024):.1f} MB) "
+                    f"exceeds maximum allowed size ({limit_uncompressed / (1024 * 1024):.0f} MB)."
+                )
+
+            # Check compression ratio (zip bomb defense)
+            if compressed_size > 0:
+                ratio = total_size / compressed_size
+                if ratio > MAX_COMPRESSION_RATIO:
+                    raise ValueError(
+                        f"ZIP archive has an excessively high compression ratio "
+                        f"({ratio:.1f}:1 > {MAX_COMPRESSION_RATIO:.0f}:1). Potential zip bomb rejected."
+                    )
+
+            for member in members:
+                # Check individual file size limit
+                if member.file_size > MAX_SINGLE_FILE_SIZE:
+                    raise ValueError(
+                        f"File {member.filename} ({member.file_size / (1024 * 1024):.1f} MB) "
+                        f"exceeds maximum allowed single-file limit ({MAX_SINGLE_FILE_SIZE / (1024 * 1024):.0f} MB)."
+                    )
+
+                # Check for path traversal attempts
+                normalized_name = member.filename.replace("\\", "/")
+                if normalized_name.startswith("/"):
+                    raise ValueError("Unsafe ZIP path detected: absolute paths are rejected.")
+
+                if len(normalized_name) >= 2 and normalized_name[1] == ":":
+                    raise ValueError("Unsafe ZIP path detected: Windows drive paths are rejected.")
+
+                target = (destination / member.filename).resolve()
+
+                if target != destination and destination not in target.parents:
+                    raise ValueError(f"Unsafe ZIP path detected: '{member.filename}' escapes target directory.")
+
+            archive.extractall(destination)
+
+    except zipfile.BadZipFile as exc:
+        raise ValueError("The uploaded file is not a valid ZIP archive.") from exc
+
+
+def extract_repository_zip(
+    zip_path: Path,
+    repository_dir: Path,
+) -> None:
+    """
+    Extract a repository ZIP archive, unpacking any single nested ZIP archive.
+    """
+    zip_path = Path(zip_path)
+    repository_dir = Path(repository_dir).resolve()
+
+    if not zip_path.exists():
+        raise FileNotFoundError(f"ZIP file does not exist: {zip_path}")
+
+    try:
+        safe_extract_zip(zip_path, repository_dir)
+
+        # Handle one nested ZIP only when it is the sole extracted file.
+        extracted_files = [
+            path
+            for path in repository_dir.rglob("*")
+            if path.is_file() and path.resolve() != zip_path.resolve()
+        ]
+
+        if len(extracted_files) == 1:
+            nested_zip = extracted_files[0]
+
+            if nested_zip.suffix.lower() == ".zip":
+                nested_destination = nested_zip.parent / "source"
+                safe_extract_zip(nested_zip, nested_destination)
+
+    except zipfile.BadZipFile as exc:
+        raise ValueError("The uploaded file is not a valid ZIP archive") from exc
+
+
 def extract_repository(
     zip_path: str,
     repository_id: str,
@@ -251,10 +365,9 @@ def extract_repository(
 
     Features:
     - ZIP-slip protection
-    - extracted-size protection
+    - extracted-size and file-count protection
     - individual-file-size protection
-    - skips ignored directories
-    - streams files from ZIP to disk
+    - single nested ZIP extraction
     """
 
     BASE_REPOSITORY_DIR.mkdir(
@@ -275,152 +388,20 @@ def extract_repository(
         exist_ok=True,
     )
 
-    total_extracted_size = 0
-
     try:
-
-        with zipfile.ZipFile(
-            zip_path,
-            "r",
-        ) as zip_ref:
-
-            members = zip_ref.infolist()
-
-            for member in members:
-
-                member_name = member.filename
-
-                # ------------------------------------------------
-                # SAFE PATH CHECK
-                # ------------------------------------------------
-
-                if not is_safe_zip_path(
-                    repository_path,
-                    member_name,
-                ):
-                    raise ValueError(
-                        "ZIP archive contains an unsafe file path: "
-                        f"{member_name}"
-                    )
-
-                # ------------------------------------------------
-                # NORMALIZE PATH
-                # ------------------------------------------------
-
-                normalized_parts = Path(
-                    member_name.replace("\\", "/")
-                ).parts
-
-                # ------------------------------------------------
-                # SKIP IGNORED DIRECTORIES
-                # ------------------------------------------------
-
-                if any(
-                    part in IGNORED_DIRECTORIES
-                    for part in normalized_parts
-                ):
-                    continue
-
-                # ------------------------------------------------
-                # DIRECTORY
-                # ------------------------------------------------
-
-                if member.is_dir():
-                    directory_path = (
-                        repository_path
-                        / member_name
-                    )
-
-                    directory_path.mkdir(
-                        parents=True,
-                        exist_ok=True,
-                    )
-
-                    continue
-
-                # ------------------------------------------------
-                # FILE SIZE PROTECTION
-                # ------------------------------------------------
-
-                file_size = member.file_size
-
-                if file_size > MAX_SINGLE_FILE_SIZE:
-                    print(
-                        "Skipping oversized file: "
-                        f"{member_name} "
-                        f"({file_size / (1024 * 1024):.2f} MB)"
-                    )
-                    continue
-
-                # ------------------------------------------------
-                # TOTAL SIZE PROTECTION
-                # ------------------------------------------------
-
-                total_extracted_size += file_size
-
-                if (
-                    total_extracted_size
-                    > MAX_EXTRACTED_REPOSITORY_SIZE
-                ):
-                    raise ValueError(
-                        "Extracted repository is too large. "
-                        "Maximum supported extracted size is "
-                        "10 GB."
-                    )
-
-                # ------------------------------------------------
-                # CREATE TARGET PATH
-                # ------------------------------------------------
-
-                target_path = (
-                    repository_path
-                    / member_name
-                )
-
-                target_path.parent.mkdir(
-                    parents=True,
-                    exist_ok=True,
-                )
-
-                # ------------------------------------------------
-                # STREAM FILE FROM ZIP TO DISK
-                # ------------------------------------------------
-
-                with zip_ref.open(
-                    member,
-                    "r",
-                ) as source:
-
-                    with open(
-                        target_path,
-                        "wb",
-                    ) as destination:
-
-                        while True:
-
-                            chunk = source.read(
-                                1024 * 1024
-                            )
-
-                            if not chunk:
-                                break
-
-                            destination.write(
-                                chunk
-                            )
-
+        extract_repository_zip(
+            zip_path=Path(zip_path),
+            repository_dir=repository_path,
+        )
         return repository_path
 
     except Exception:
-
-        # Clean up partially extracted repository
-        # if extraction fails.
+        # Clean up partially extracted repository if extraction fails.
         if repository_path.exists():
             shutil.rmtree(
                 repository_path,
                 ignore_errors=True,
             )
-
         raise
 
 
@@ -479,6 +460,203 @@ def is_supported_file(
 
     return True
 
+
+
+# ============================================================
+# LANGUAGE SUMMARY REFERENCE IMPLEMENTATION
+# ============================================================
+
+LANGUAGE_BY_SUFFIX = {
+    ".py": "Python",
+    ".js": "JavaScript",
+    ".jsx": "JavaScript",
+    ".ts": "TypeScript",
+    ".tsx": "TypeScript",
+    ".java": "Java",
+    ".c": "C",
+    ".h": "C/C++",
+    ".cpp": "C++",
+    ".cs": "C#",
+    ".go": "Go",
+    ".rs": "Rust",
+    ".php": "PHP",
+    ".rb": "Ruby",
+    ".swift": "Swift",
+    ".kt": "Kotlin",
+    ".html": "HTML",
+    ".css": "CSS",
+    ".sql": "SQL",
+}
+
+def summarize_languages(repository_path: Path) -> dict:
+    """
+    Detect programming languages from extracted source files.
+    Excludes generated/vendor folders (.git, node_modules, venv, dist, build).
+    """
+    repository_path = Path(repository_path)
+    counts = Counter()
+    source_files = 0
+
+    for path in repository_path.rglob("*"):
+        if not path.is_file():
+            continue
+
+        relative = path.relative_to(repository_path)
+        if any(part in IGNORED_DIRECTORIES for part in relative.parts):
+            continue
+
+        language = LANGUAGE_BY_SUFFIX.get(path.suffix.lower())
+        if language:
+            counts[language] += 1
+            source_files += 1
+
+    return {
+        "source_file_count": source_files,
+        "languages": [
+            {"name": name, "file_count": count}
+            for name, count in sorted(
+                counts.items(), key=lambda item: item[1], reverse=True
+            )
+        ],
+    }
+
+
+# ============================================================
+# SAFE ENVIRONMENT-FILE INVENTORY
+# ============================================================
+
+ENV_NAMES = {".env", ".env.example", ".env.sample", ".env.template"}
+
+def inspect_env_files(repository_path: Path) -> list[dict]:
+    """
+    Detect .env and env-example files, returning filenames and variable names ONLY.
+    Never exposes, logs, or returns secret values.
+    """
+    repository_path = Path(repository_path)
+    results = []
+
+    for path in repository_path.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.name not in ENV_NAMES and not path.name.startswith(".env."):
+            continue
+
+        relative = path.relative_to(repository_path)
+        if any(part in IGNORED_DIRECTORIES for part in relative.parts):
+            continue
+
+        variable_names = []
+        try:
+            for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name = line.split("=", 1)[0].strip()
+                if name and name.replace("_", "").isalnum():
+                    variable_names.append(name)
+        except OSError:
+            continue
+
+        results.append({
+            "file": str(relative).replace("\\", "/"),
+            "variable_names": sorted(set(variable_names)),
+            "values_redacted": True,
+        })
+
+    results.sort(key=lambda item: item["file"])
+    return results
+
+
+# ============================================================
+# DEPENDENCY MANIFEST PARSER
+# ============================================================
+
+def parse_dependency_manifests(repository_path: Path) -> list[dict]:
+    """
+    Detect available dependency manifests (requirements.txt, package.json, pyproject.toml)
+    and parse declared dependencies without inventing relationships.
+    """
+    repository_path = Path(repository_path)
+    manifests = []
+
+    # 1. requirements.txt / requirements-*.txt
+    for path in repository_path.rglob("*requirements*.txt"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(repository_path)
+        if any(part in IGNORED_DIRECTORIES for part in relative.parts):
+            continue
+
+        deps = []
+        try:
+            for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or line.startswith("-"):
+                    continue
+                match = re.match(r"^([a-zA-Z0-9_.-]+)\s*([=><~].*)?$", line)
+                if match:
+                    pkg_name = match.group(1).strip()
+                    ver = match.group(2).strip() if match.group(2) else "unspecified"
+                    deps.append({"name": pkg_name, "version": ver})
+        except OSError:
+            pass
+
+        if deps:
+            manifests.append({
+                "file": str(relative).replace("\\", "/"),
+                "dependencies": deps,
+            })
+
+    # 2. package.json
+    for path in repository_path.rglob("package.json"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(repository_path)
+        if any(part in IGNORED_DIRECTORIES for part in relative.parts):
+            continue
+
+        deps = []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8", errors="ignore"))
+            for pkg, ver in data.get("dependencies", {}).items():
+                deps.append({"name": pkg, "version": str(ver)})
+            for pkg, ver in data.get("devDependencies", {}).items():
+                deps.append({"name": pkg, "version": str(ver)})
+        except (OSError, ValueError):
+            pass
+
+        if deps:
+            manifests.append({
+                "file": str(relative).replace("\\", "/"),
+                "dependencies": deps,
+            })
+
+    # 3. pyproject.toml
+    for path in repository_path.rglob("pyproject.toml"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(repository_path)
+        if any(part in IGNORED_DIRECTORIES for part in relative.parts):
+            continue
+
+        deps = []
+        try:
+            for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = line.strip()
+                match = re.match(r'^"?([a-zA-Z0-9_.-]+)"?\s*=\s*"([^"]+)"', line)
+                if match and not line.startswith("["):
+                    deps.append({"name": match.group(1), "version": match.group(2)})
+        except OSError:
+            pass
+
+        if deps:
+            manifests.append({
+                "file": str(relative).replace("\\", "/"),
+                "dependencies": deps,
+            })
+
+    manifests.sort(key=lambda m: m["file"])
+    return manifests
 
 # ============================================================
 # GET SUPPORTED FILES
@@ -561,6 +739,9 @@ def get_repository_info(
             )
             for file_path in files
         ],
+        "language_summary": summarize_languages(repository_path),
+        "dependency_manifests": parse_dependency_manifests(repository_path),
+        "environment_files": inspect_env_files(repository_path),
     }
 
 

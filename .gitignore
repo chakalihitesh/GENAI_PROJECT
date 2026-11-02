@@ -1,6 +1,7 @@
 # Secrets
 .env
 .env.*
+!.env.example
 
 # Python virtual environments
 venv/
@@ -19,9 +20,11 @@ htmlcov/
 
 # Generated vector database
 data/chroma_db/
+data/chroma/
 
 # Uploaded repositories / generated repository data
 data/repositories/
+data/uploads/
 
 # Backend generated uploads
 backend/uploads/

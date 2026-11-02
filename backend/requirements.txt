@@ -1,0 +1,13 @@
+# Core Web Framework
+fastapi>=0.110.0
+uvicorn>=0.28.0
+pydantic>=2.6.0
+python-dotenv>=1.0.0
+python-multipart>=0.0.9
+
+# AI & LLM Service
+groq>=0.11.0
+
+# RAG & Vector Database
+chromadb>=0.4.24
+sentence-transformers>=2.5.0

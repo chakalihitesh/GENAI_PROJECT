@@ -1,27 +1,32 @@
-from google import genai
-from google.genai import types
+from pathlib import Path
 from dotenv import load_dotenv
+from groq import Groq
 import os
 import time
 
+# Ensure .env is loaded from project root or backend directory
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = _BACKEND_DIR.parent
 
-load_dotenv()
+load_dotenv(_PROJECT_ROOT / ".env")
+if (_BACKEND_DIR / ".env").exists():
+    load_dotenv(_BACKEND_DIR / ".env")
 
 
 class LLMService:
     """
-    Handles Gemini generation for CodeLens AI.
+    Handles Groq generation for CodeLens AI.
 
     The model is instructed to answer only from repository
     evidence and to distinguish actual implementation/evidence
     from mentions of questions, tests, documentation, or examples.
     """
 
-    PRIMARY_MODEL = "gemini-3.8-flash"
-    FALLBACK_MODEL = "gemini-3.5-flash-lite"
+    PRIMARY_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-20b")
 
     MAX_RETRIES_PER_MODEL = 2
-    RETRY_DELAY_SECONDS = 2
+    RETRY_DELAY_SECONDS = 1
 
     TEMPERATURE = 0.2
 
@@ -31,16 +36,17 @@ class LLMService:
     )
 
     def __init__(self):
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv("GROQ_API_KEY")
 
         if not api_key:
-            raise ValueError(
-                "GEMINI_API_KEY is not configured."
+            print(
+                "WARNING: GROQ_API_KEY is not configured. Q&A answers will require GROQ_API_KEY in .env."
             )
-
-        self.client = genai.Client(
-            api_key=api_key
-        )
+            self.client = None
+        else:
+            self.client = Groq(
+                api_key=api_key
+            )
 
         self.models = [
             self.PRIMARY_MODEL,
@@ -48,7 +54,7 @@ class LLMService:
         ]
 
         print(
-            "LLM service initialized successfully."
+            "LLM service (Groq) initialized successfully."
         )
 
     # =========================================================
@@ -170,7 +176,7 @@ Do not add outside knowledge to the fallback case.
 """
 
     # =========================================================
-    # GEMINI GENERATION
+    # GROQ GENERATION
     # =========================================================
 
     def generate_answer(
@@ -179,7 +185,7 @@ Do not add outside knowledge to the fallback case.
         context: str,
     ) -> dict:
         """
-        Generate a grounded answer using Gemini.
+        Generate a grounded answer using Groq.
 
         Returns:
 
@@ -205,10 +211,19 @@ Do not add outside knowledge to the fallback case.
             context=context,
         )
 
+        if not self.client:
+            api_key = os.getenv("GROQ_API_KEY")
+            if api_key:
+                self.client = Groq(api_key=api_key)
+            else:
+                raise RuntimeError(
+                    "GROQ_API_KEY is missing. Add it to the backend .env file."
+                )
+
         last_error = None
 
         # -----------------------------------------------------
-        # Try Gemini models
+        # Try Groq models
         # -----------------------------------------------------
 
         for model_name in self.models:
@@ -220,43 +235,45 @@ Do not add outside knowledge to the fallback case.
                 try:
 
                     print(
-                        f"Trying Gemini model: "
+                        f"Trying Groq model: "
                         f"{model_name} "
                         f"(attempt "
                         f"{attempt + 1}/"
                         f"{self.MAX_RETRIES_PER_MODEL})"
                     )
 
-                    response = (
-                        self.client.models.generate_content(
-                            model=model_name,
-                            contents=prompt,
-                            config=types.GenerateContentConfig(
-                                temperature=self.TEMPERATURE
-                            ),
-                        )
+                    response = self.client.chat.completions.create(
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": prompt,
+                            }
+                        ],
+                        model=model_name,
+                        temperature=self.TEMPERATURE,
                     )
 
-                    if response is None:
+                    if not response or not response.choices:
                         raise RuntimeError(
-                            "Gemini returned an empty response."
+                            "Groq returned an empty response."
                         )
 
+                    choice = response.choices[0]
                     answer = getattr(
-                        response,
-                        "text",
+                        choice.message,
+                        "content",
                         None,
                     )
 
                     if not answer or not answer.strip():
                         raise RuntimeError(
-                            "Gemini returned empty text."
+                            "Groq returned empty text."
                         )
 
                     answer = answer.strip()
 
                     print(
-                        f"Gemini generation successful "
+                        f"Groq generation successful "
                         f"using {model_name}"
                     )
 
@@ -269,10 +286,16 @@ Do not add outside knowledge to the fallback case.
 
                     last_error = error
 
+                    err_msg = str(error)
                     print(
-                        f"Gemini model {model_name} "
+                        f"Groq model {model_name} "
                         f"failed: {error}"
                     )
+
+                    if "invalid_api_key" in err_msg or "401" in err_msg:
+                        raise RuntimeError(
+                            "Invalid GROQ_API_KEY: please verify your Groq API key in .env"
+                        ) from error
 
                     if (
                         attempt
@@ -283,7 +306,7 @@ Do not add outside knowledge to the fallback case.
                         )
 
             print(
-                f"Trying fallback Gemini model "
+                f"Trying fallback Groq model "
                 f"after failure: {model_name}"
             )
 
@@ -292,6 +315,6 @@ Do not add outside knowledge to the fallback case.
         # -----------------------------------------------------
 
         raise RuntimeError(
-            "All Gemini models failed. "
+            "All Groq models failed. "
             f"Last error: {last_error}"
         )
