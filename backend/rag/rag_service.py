@@ -1,5 +1,7 @@
 from rag.search_service import SearchService
 from rag.llm_service import LLMService
+from config import REPOSITORIES_DIR
+from services.repository_file_search import retrieve_file_search_chunks
 
 
 class RAGService:
@@ -10,23 +12,20 @@ class RAGService:
 
     User Question
           ↓
-    Semantic Search
+    Semantic Search + Additive File Search
           ↓
-    Ranked Repository Chunks
+    Combined Repository Chunks & Locations
           ↓
     Context Builder
           ↓
-    Gemini
+    Groq LLM
           ↓
     Grounded Answer
           ↓
     Sources
     """
 
-    # Maximum amount of repository context sent to Gemini.
-    #
-    # This prevents large repositories from producing
-    # unnecessarily large prompts.
+    # Maximum amount of repository context sent to LLM.
     MAX_CONTEXT_CHARACTERS = 24000
 
     def __init__(
@@ -48,52 +47,24 @@ class RAGService:
         """
         Create a human-readable source label.
         """
-
         file_path = metadata.get(
             "file_path",
             "Unknown file",
         )
-
-        start_line = metadata.get(
-            "start_line"
-        )
-
-        end_line = metadata.get(
-            "end_line"
-        )
-
-        name = metadata.get(
-            "name"
-        )
+        start_line = metadata.get("start_line")
+        end_line = metadata.get("end_line")
+        name = metadata.get("name")
 
         if start_line is not None and end_line is not None:
-
-            line_info = (
-                f"Lines {start_line}-{end_line}"
-            )
-
+            line_info = f"Lines {start_line}-{end_line}"
         elif start_line is not None:
-
-            line_info = (
-                f"Line {start_line}"
-            )
-
+            line_info = f"Line {start_line}"
         else:
-
             line_info = "Line information unavailable"
 
         if name:
-
-            return (
-                f"{file_path} | "
-                f"{name} | "
-                f"{line_info}"
-            )
-
-        return (
-            f"{file_path} | "
-            f"{line_info}"
-        )
+            return f"{file_path} | {name} | {line_info}"
+        return f"{file_path} | {line_info}"
 
     # =========================================================
     # CONTEXT BUILDER
@@ -104,17 +75,8 @@ class RAGService:
         search_results: list[dict],
     ) -> str:
         """
-        Convert retrieved repository chunks into
-        structured context for Gemini.
-
-        The context contains:
-        - file path
-        - function/class/chunk name
-        - line numbers
-        - chunk type
-        - source code/content
+        Convert retrieved repository chunks into structured context for LLM.
         """
-
         if not search_results:
             return ""
 
@@ -125,17 +87,14 @@ class RAGService:
             search_results,
             start=1,
         ):
-
             metadata = result.get(
                 "metadata",
                 {},
             )
-
             content = result.get(
                 "content",
                 "",
             )
-
             if not content:
                 continue
 
@@ -143,22 +102,18 @@ class RAGService:
                 "file_path",
                 "Unknown file",
             )
-
             name = metadata.get(
                 "name",
                 "",
             )
-
             start_line = metadata.get(
                 "start_line",
                 "?",
             )
-
             end_line = metadata.get(
                 "end_line",
                 "?",
             )
-
             chunk_type = metadata.get(
                 "chunk_type",
                 "unknown",
@@ -177,26 +132,10 @@ class RAGService:
                 f"{'=' * 60}\n"
             )
 
-            block_length = len(
-                source_block
-            )
+            block_length = len(source_block)
 
-            # -------------------------------------------------
-            # Stop before exceeding context limit.
-            # -------------------------------------------------
-
-            if (
-                total_characters + block_length
-                > self.MAX_CONTEXT_CHARACTERS
-            ):
-
-                remaining = (
-                    self.MAX_CONTEXT_CHARACTERS
-                    - total_characters
-                )
-
-                # If there isn't enough room for a useful
-                # additional source, stop.
+            if total_characters + block_length > self.MAX_CONTEXT_CHARACTERS:
+                remaining = self.MAX_CONTEXT_CHARACTERS - total_characters
                 if remaining < 500:
                     break
 
@@ -204,26 +143,14 @@ class RAGService:
                     source_block[:remaining]
                     + "\n[Context truncated]"
                 )
-
-                context_parts.append(
-                    truncated_block
-                )
-
-                total_characters += len(
-                    truncated_block
-                )
-
+                context_parts.append(truncated_block)
+                total_characters += len(truncated_block)
                 break
 
-            context_parts.append(
-                source_block
-            )
-
+            context_parts.append(source_block)
             total_characters += block_length
 
-        return "\n".join(
-            context_parts
-        )
+        return "\n".join(context_parts)
 
     # =========================================================
     # SOURCE BUILDER
@@ -236,42 +163,23 @@ class RAGService:
         """
         Convert search metadata into clean source references.
         """
-
         sources = []
-
         seen_sources = set()
 
         for result in search_results:
-
             metadata = result.get(
                 "metadata",
                 {},
             )
-
             file_path = metadata.get(
                 "file_path",
                 "Unknown file",
             )
-
-            start_line = metadata.get(
-                "start_line"
-            )
-
-            end_line = metadata.get(
-                "end_line"
-            )
-
-            chunk_type = metadata.get(
-                "chunk_type"
-            )
-
-            name = metadata.get(
-                "name"
-            )
-
-            distance = result.get(
-                "distance"
-            )
+            start_line = metadata.get("start_line")
+            end_line = metadata.get("end_line")
+            chunk_type = metadata.get("chunk_type")
+            name = metadata.get("name")
+            distance = result.get("distance")
 
             source_key = (
                 file_path,
@@ -283,20 +191,16 @@ class RAGService:
             if source_key in seen_sources:
                 continue
 
-            seen_sources.add(
-                source_key
-            )
+            seen_sources.add(source_key)
 
-            sources.append(
-                {
-                    "file_path": file_path,
-                    "start_line": start_line,
-                    "end_line": end_line,
-                    "chunk_type": chunk_type,
-                    "name": name,
-                    "distance": distance,
-                }
-            )
+            sources.append({
+                "file_path": file_path,
+                "start_line": start_line,
+                "end_line": end_line,
+                "chunk_type": chunk_type,
+                "name": name,
+                "distance": distance,
+            })
 
         return sources
 
@@ -311,31 +215,25 @@ class RAGService:
         top_k: int = 5,
     ) -> dict:
         """
-        Complete RAG pipeline.
+        Complete RAG pipeline with additive file search.
 
-        1. Retrieve relevant repository chunks
-        2. Build structured context
-        3. Send context + question to Gemini
-        4. Return answer + sources + retrieved chunks
+        1. Retrieve relevant repository chunks (semantic vector search)
+        2. Perform additive file inventory & literal code-location search
+        3. Build structured context from combined evidence
+        4. Send context + question to LLM
+        5. Return answer + sources + retrieved chunks
         """
-
         if not repository_id:
-            raise ValueError(
-                "repository_id is required."
-            )
+            raise ValueError("repository_id is required.")
 
         if not question or not question.strip():
-            raise ValueError(
-                "Question cannot be empty."
-            )
+            raise ValueError("Question cannot be empty.")
 
         if top_k <= 0:
-            raise ValueError(
-                "top_k must be greater than 0."
-            )
+            raise ValueError("top_k must be greater than 0.")
 
         # -----------------------------------------------------
-        # STEP 1: RETRIEVE
+        # STEP 1: RETRIEVE (SEMANTIC + ADDITIVE FILE SEARCH)
         # -----------------------------------------------------
 
         search_results = (
@@ -346,12 +244,22 @@ class RAGService:
             )
         )
 
+        repo_root = REPOSITORIES_DIR / repository_id
+        file_chunks = []
+        if repo_root.is_dir():
+            try:
+                file_chunks = retrieve_file_search_chunks(repo_root, question)
+            except Exception as e:
+                print(f"Additive file search retrieval error: {e}")
+                file_chunks = []
+
+        all_results = file_chunks + (search_results or [])
+
         # -----------------------------------------------------
         # STEP 2: NO RESULTS
         # -----------------------------------------------------
 
-        if not search_results:
-
+        if not all_results:
             return {
                 "answer": (
                     "I couldn't find evidence of that "
@@ -366,23 +274,20 @@ class RAGService:
         # STEP 3: BUILD CONTEXT
         # -----------------------------------------------------
 
-        context = self.build_context(
-            search_results
-        )
+        context = self.build_context(all_results)
 
         # -----------------------------------------------------
         # STEP 4: SAFETY CHECK
         # -----------------------------------------------------
 
         if not context.strip():
-
             return {
                 "answer": (
                     "I couldn't find evidence of that "
                     "in the uploaded repository."
                 ),
                 "sources": [],
-                "retrieved_chunks": search_results,
+                "retrieved_chunks": all_results,
                 "model": "Not used",
             }
 
@@ -401,21 +306,15 @@ class RAGService:
         # STEP 6: BUILD SOURCES
         # -----------------------------------------------------
 
-        sources = self.build_sources(
-            search_results
-        )
+        sources = self.build_sources(all_results)
 
         # -----------------------------------------------------
         # STEP 7: FINAL RESPONSE
         # -----------------------------------------------------
 
         return {
-            "answer": generation_result[
-                "answer"
-            ],
+            "answer": generation_result["answer"],
             "sources": sources,
-            "retrieved_chunks": search_results,
-            "model": generation_result[
-                "model"
-            ],
+            "retrieved_chunks": all_results,
+            "model": generation_result["model"],
         }

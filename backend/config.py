@@ -34,7 +34,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Archive extraction limits (configurable via environment variables)
-MAX_ZIP_FILES = int(os.getenv("MAX_ZIP_FILES", "10000"))
+MAX_ZIP_FILES = int(os.getenv("MAX_ZIP_FILES", "50000"))
 MAX_UNCOMPRESSED_BYTES = int(os.getenv("MAX_UNCOMPRESSED_BYTES", str(500 * 1024 * 1024)))  # 500 MB default
 MAX_COMPRESSED_BYTES = int(os.getenv("MAX_COMPRESSED_BYTES", str(100 * 1024 * 1024)))      # 100 MB default
 MAX_SINGLE_FILE_SIZE = int(os.getenv("MAX_SINGLE_FILE_SIZE", str(100 * 1024 * 1024)))      # 100 MB default

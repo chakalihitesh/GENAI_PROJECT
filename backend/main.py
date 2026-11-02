@@ -39,6 +39,7 @@ from analysis.impact_analyzer import ImpactAnalyzer
 from analysis.onboarding_analyzer import OnboardingAnalyzer
 from services.progress_service import progress_service
 from repository.chunker import chunk_repository
+from routers.file_search import router as file_search_router
 # ============================================================
 # APP CONFIGURATION
 # ============================================================
@@ -51,6 +52,8 @@ app = FastAPI(
 
 
 # ============================================================
+app.include_router(file_search_router)
+
 # CORS
 # ============================================================
 
