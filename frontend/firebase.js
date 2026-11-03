@@ -255,7 +255,7 @@ export function formatAuthError(error) {
             return "Invalid Firebase API Key. Please verify your API key in Firebase Console.";
         case "auth/unauthorized-domain":
         case "auth/app-not-authorized": {
-            const currentHost = (typeof window !== "undefined" && window.location && window.location.hostname) ? window.location.hostname : "genai-project-frontend.vercel.app";
+            const currentHost = (typeof window !== "undefined" && window.location && window.location.hostname) ? window.location.hostname : "genaiproject-frontend.vercel.app";
             console.warn(`[Firebase Auth] Domain '${currentHost}' is not in Firebase Authorized Domains. Visit Firebase Console -> Authentication -> Settings -> Authorized domains and add: ${currentHost}`);
             return `Unauthorized domain (${currentHost}). Please ensure '${currentHost}' (without https://) is added in Firebase Console > Authentication > Settings > Authorized domains.`;
         }
