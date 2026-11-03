@@ -22,8 +22,8 @@ class LLMService:
     from mentions of questions, tests, documentation, or examples.
     """
 
-    PRIMARY_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-    FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-20b")
+    PRIMARY_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "llama-3.1-8b-instant")
 
     MAX_RETRIES_PER_MODEL = 2
     RETRY_DELAY_SECONDS = 1
@@ -51,6 +51,8 @@ class LLMService:
         self.models = [
             self.PRIMARY_MODEL,
             self.FALLBACK_MODEL,
+            "llama-3.1-70b-versatile",
+            "mixtral-8x7b-32768",
         ]
 
         print(
@@ -81,65 +83,30 @@ actual evidence contained in the provided repository context.
 CRITICAL GROUNDING RULES
 ============================================================
 
-1. Do NOT use outside knowledge.
+1. Answer using ONLY actual evidence contained in the provided repository context.
 
-2. Do NOT invent files, functions, classes, APIs,
-   technologies, dependencies, behavior, or facts.
+2. Do NOT invent files, functions, classes, APIs, technologies, dependencies, or behavior.
 
-3. Repository context may contain:
-   - source code
-   - documentation
-   - README files
-   - test files
-   - evaluation questions
-   - examples
-   - comments
-   - configuration files
+3. For project overview questions ("What is this project about?", "What does this codebase do?", "Explain this project"):
+   - Synthesize the project's purpose from the provided README, file inventory, dependency manifests, and source code.
+   - Provide a clear, structured summary of what the project does based strictly on the files.
 
-   These are not automatically evidence for the answer.
+4. For file inventory questions ("What files are in this repository?", "List the files"):
+   - List the files shown in the provided repository context and file structure.
 
-4. A question appearing inside a README, test file,
-   evaluation list, example, comment, or documentation
-   does NOT mean that the repository contains the answer
-   to that question.
+5. For technology / dependency questions ("What technologies or libraries are used?"):
+   - List the languages, libraries, and frameworks found in the provided manifests (e.g. package.json, requirements.txt) and source code.
 
-5. If the context only shows that the user's question is
-   mentioned, tested, listed, or used as an example, but
-   does NOT provide the actual answer, you MUST NOT answer
-   the question using general knowledge.
+6. For code and implementation questions:
+   - Provide direct answers citing actual file paths, classes, functions, and lines.
+   - Distinguish between implementation, calling code, tests, and documentation.
 
-6. For example, if the context contains:
+7. If a specific feature is asked about and is ABSENT from the codebase (e.g. "How does authentication work?" or "Does it contain authentication?" when no auth code exists):
+   - State clearly and directly that the feature is not implemented in this repository.
+   - Mention which files were reviewed and that no matching logic was found.
 
-   "The evaluation includes:
-    What is the capital of France?"
-
-   this is NOT evidence that the repository knows the
-   capital of France.
-
-   In that situation, respond exactly:
-
-   "I couldn't find evidence of that in the uploaded repository."
-
-7. Only answer a factual question when the repository
-   context contains actual evidence supporting that answer.
-
-8. For code questions, actual source code is strong evidence.
-
-9. For implementation questions, distinguish between:
-   - code that implements functionality
-   - code that calls functionality
-   - code that tests functionality
-   - documentation describing functionality
-
-10. If multiple files provide actual evidence, combine them
-    and explain their relationship.
-
-11. If the evidence is insufficient, incomplete, or only
-    indirectly related to the question, use the fallback
-    response instead of guessing.
-
-12. Never answer from general knowledge simply because you
-    recognize the question.
+8. If a question is completely unrelated to the software repository (e.g. "What is the capital of France?"):
+   - Respond: "I couldn't find evidence of that in the uploaded repository."
 
 ============================================================
 REPOSITORY CONTEXT
@@ -157,22 +124,7 @@ USER QUESTION
 ANSWERING INSTRUCTIONS
 ============================================================
 
-First determine whether the repository context contains
-actual evidence that can answer the question.
-
-If YES (evidence exists in the codebase):
-- provide a clear, helpful answer grounded in the codebase
-- mention relevant files
-- mention functions/classes when applicable
-- mention line ranges when available
-- explain relationships between files when useful
-
-If NO (the feature or concept is NOT found in the repository, or the user asks if a feature exists):
-- state clearly and directly that the feature/concept was not found in this codebase
-  (for example, if asked 'does it contain authentication', state clearly that no authentication, login, or session logic was found in the repository files)
-- do NOT invent or assume code that is not present
-- if the question is completely unrelated to the repository, you may respond:
-  "I couldn't find evidence of that in the uploaded repository."
+Answer the user's question clearly, thoroughly, and accurately using the repository context above according to the grounding rules.
 """
 
     # =========================================================

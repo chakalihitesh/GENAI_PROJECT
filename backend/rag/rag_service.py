@@ -253,28 +253,48 @@ class RAGService:
                 print(f"Additive file search retrieval error: {e}")
                 file_chunks = []
 
-        all_results = file_chunks + (search_results or [])
+            # Check if query is about project overview, files, or technologies, or if search results are sparse
+            q_lower = question.lower()
+            is_broad_query = any(k in q_lower for k in [
+                "project about", "what is this", "what does", "overview", "architecture",
+                "what files", "which files", "list files", "file list", "structure",
+                "technolog", "librar", "dependenc", "framework", "package", "stack", "contains", "contain"
+            ])
 
-        # If no specific code chunks matched, provide repository file inventory
-        # so the LLM can verify whether the feature exists or is absent
-        if not all_results and repo_root.is_dir():
-            try:
-                inventory = list_files(repo_root)
-                if inventory:
-                    file_names = [f["path"] for f in inventory[:40]]
-                    all_results = [{
-                        "content": f"Repository File Inventory ({len(inventory)} total files):\n" + "\n".join(f"- {p}" for p in file_names),
+            if is_broad_query or not search_results:
+                try:
+                    from repository.manager import summarize_languages, parse_dependency_manifests
+                    lang_summary = summarize_languages(repo_root)
+                    manifests = parse_dependency_manifests(repo_root)
+                    all_files = list_files(repo_root)
+
+                    overview_lines = [
+                        f"Repository Total Files: {lang_summary.get('source_file_count', len(all_files))}",
+                        "Detected Languages: " + ", ".join(f"{l['name']} ({l['file_count']} files)" for l in lang_summary.get("languages", [])),
+                    ]
+                    if manifests:
+                        for m in manifests[:3]:
+                            deps = [f"{d['name']} ({d['version']})" for d in m.get("dependencies", [])[:15]]
+                            overview_lines.append(f"Manifest '{m['file']}': " + ", ".join(deps))
+
+                    file_sample = [f["path"] for f in all_files[:40]]
+                    overview_lines.append("Repository File List:\n" + "\n".join(f"- {p}" for p in file_sample))
+
+                    file_chunks.insert(0, {
+                        "content": "REPOSITORY OVERVIEW & FILE INVENTORY:\n" + "\n".join(overview_lines),
                         "metadata": {
-                            "file_path": "Repository Structure",
-                            "name": "repository_files",
+                            "file_path": "Repository Overview",
+                            "name": "repository_overview",
                             "start_line": 1,
-                            "end_line": min(len(file_names), 40),
-                            "chunk_type": "file_inventory",
+                            "end_line": len(overview_lines),
+                            "chunk_type": "repository_overview",
                         },
                         "distance": 0.0,
-                    }]
-            except Exception as inv_err:
-                print(f"File inventory fallback error: {inv_err}")
+                    })
+                except Exception as meta_err:
+                    print(f"Repository metadata enrichment error: {meta_err}")
+
+        all_results = file_chunks + (search_results or [])
 
         # -----------------------------------------------------
         # STEP 2: NO RESULTS

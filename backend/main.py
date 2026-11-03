@@ -1243,6 +1243,13 @@ def semantic_search(
             detail="top_k must be at least 1.",
         )
 
+    repository_path = REPOSITORIES_DIR / repository_id
+    if not repository_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Repository not found on server. Please click '+ New repository' to re-import or upload your project.",
+        )
+
     try:
 
         results = search_service.search(
@@ -1309,6 +1316,13 @@ def ask_repository(
         raise HTTPException(
             status_code=400,
             detail="top_k must be at least 1.",
+        )
+
+    repository_path = REPOSITORIES_DIR / repository_id
+    if not repository_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Repository not found on server. Please click '+ New repository' to re-import or upload your project.",
         )
 
     try:
