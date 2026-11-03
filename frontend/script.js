@@ -1,4 +1,12 @@
-const CODELENS_API_BASE = (window.location.port === "8000" || window.location.port === "") ? "" : "http://127.0.0.1:8000";
+const CODELENS_API_BASE = (function() {
+    const host = window.location.hostname;
+    // Local development:
+    if (host === "localhost" || host === "127.0.0.1") {
+        return (window.location.port === "8000" || window.location.port === "") ? "" : "http://127.0.0.1:8000";
+    }
+    // Remote deployment (Vercel, custom domain, etc.): point to Render backend
+    return "https://codelense-backend.onrender.com";
+})();
 const CURRENT_REPOSITORY_KEY = "codelens_current_repository";
 const HISTORY_KEY = "codelens_history";
 let selectedRepositoryFile = null;
