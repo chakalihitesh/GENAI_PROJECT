@@ -4,9 +4,13 @@ uvicorn>=0.28.0
 pydantic>=2.6.0
 python-dotenv>=1.0.0
 python-multipart>=0.0.9
+httpx>=0.27.0
 
 # AI & LLM Service
 groq>=0.11.0
+
+# Firebase Authentication
+firebase-admin>=6.5.0
 
 # RAG & Vector Database
 chromadb>=0.4.24
