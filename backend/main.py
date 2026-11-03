@@ -1,3 +1,12 @@
+import sys
+from pathlib import Path
+
+# Add backend directory to sys.path so modules and configs can be imported
+# seamlessly regardless of whether Uvicorn runs from repository root or backend/
+_BACKEND_DIR = Path(__file__).resolve().parent
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
+
 import os
 import gc
 import asyncio

@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: codelens-ai
+    env: python
+    plan: free
+    region: oregon
+    buildCommand: pip install torch --index-url https://download.pytorch.org/whl/cpu && pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: HF_HUB_OFFLINE
+        value: "0"
+      - key: TRANSFORMERS_OFFLINE
+        value: "0"
+      - key: EMBEDDING_BATCH_SIZE
+        value: "16"
+      - key: INDEXING_CHUNK_BATCH_SIZE
+        value: "24"
+      - key: VECTOR_BATCH_SIZE
+        value: "50"
+      - key: TOKENIZERS_PARALLELISM
+        value: "false"
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: GROQ_API_KEY
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        value: "vbus-b49d6"
+      - key: FIREBASE_API_KEY
+        value: "AIzaSyACqSw3mhUcnA1Ha5nJByVsBov8iaioKCI"
+      - key: FIREBASE_APP_ID
+        value: "1:962026177714:web:efc080ad3cddbbc75775ab"
+      - key: FIREBASE_MESSAGING_SENDER_ID
+        value: "962026177714"

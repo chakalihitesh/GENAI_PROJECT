@@ -11,6 +11,11 @@ async function readApiResponse(response) {
     try {
         return JSON.parse(text);
     } catch (_) {
+        if (text.includes("502") || text.includes("Bad Gateway") || text.includes("<html") || text.includes("<!DOCTYPE")) {
+            return {
+                detail: "Backend service is currently starting up (cold start) or unreachable (502 Bad Gateway). Please wait 20-30 seconds and try again."
+            };
+        }
         return { detail: text };
     }
 }
