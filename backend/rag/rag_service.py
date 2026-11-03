@@ -1,7 +1,7 @@
 from rag.search_service import SearchService
 from rag.llm_service import LLMService
 from config import REPOSITORIES_DIR
-from services.repository_file_search import retrieve_file_search_chunks
+from services.repository_file_search import retrieve_file_search_chunks, list_files
 
 
 class RAGService:
@@ -254,6 +254,27 @@ class RAGService:
                 file_chunks = []
 
         all_results = file_chunks + (search_results or [])
+
+        # If no specific code chunks matched, provide repository file inventory
+        # so the LLM can verify whether the feature exists or is absent
+        if not all_results and repo_root.is_dir():
+            try:
+                inventory = list_files(repo_root)
+                if inventory:
+                    file_names = [f["path"] for f in inventory[:40]]
+                    all_results = [{
+                        "content": f"Repository File Inventory ({len(inventory)} total files):\n" + "\n".join(f"- {p}" for p in file_names),
+                        "metadata": {
+                            "file_path": "Repository Structure",
+                            "name": "repository_files",
+                            "start_line": 1,
+                            "end_line": min(len(file_names), 40),
+                            "chunk_type": "file_inventory",
+                        },
+                        "distance": 0.0,
+                    }]
+            except Exception as inv_err:
+                print(f"File inventory fallback error: {inv_err}")
 
         # -----------------------------------------------------
         # STEP 2: NO RESULTS

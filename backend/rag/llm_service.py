@@ -160,19 +160,19 @@ ANSWERING INSTRUCTIONS
 First determine whether the repository context contains
 actual evidence that can answer the question.
 
-If YES:
-- provide a clear answer
+If YES (evidence exists in the codebase):
+- provide a clear, helpful answer grounded in the codebase
 - mention relevant files
 - mention functions/classes when applicable
 - mention line ranges when available
 - explain relationships between files when useful
 
-If NO:
-respond exactly:
-
-"I couldn't find evidence of that in the uploaded repository."
-
-Do not add outside knowledge to the fallback case.
+If NO (the feature or concept is NOT found in the repository, or the user asks if a feature exists):
+- state clearly and directly that the feature/concept was not found in this codebase
+  (for example, if asked 'does it contain authentication', state clearly that no authentication, login, or session logic was found in the repository files)
+- do NOT invent or assume code that is not present
+- if the question is completely unrelated to the repository, you may respond:
+  "I couldn't find evidence of that in the uploaded repository."
 """
 
     # =========================================================
