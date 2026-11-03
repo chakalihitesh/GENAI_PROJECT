@@ -1,4 +1,5 @@
 import os
+import gc
 import asyncio
 import re
 import shutil
@@ -39,7 +40,7 @@ from analysis.dependency_analyzer import DependencyAnalyzer
 from analysis.impact_analyzer import ImpactAnalyzer
 from analysis.onboarding_analyzer import OnboardingAnalyzer
 from services.progress_service import progress_service
-from repository.chunker import chunk_repository
+from repository.chunker import chunk_repository, chunk_file
 from routers.file_search import router as file_search_router
 from routers.auth import router as auth_router
 # ============================================================
@@ -1052,149 +1053,76 @@ def index_repository(
         )
 
         # ----------------------------------------------------
-        # Use the existing repository-level chunker.
+        # ----------------------------------------------------
+        # STREAMING BATCH INDEXING FOR LOW RAM (512MB)
         #
-        # This automatically handles:
-        #
-        # Python AST chunking
-        # Normal text chunking
-        # Large-file streaming chunking
-        # Chunk overlap
-        # Deterministic chunk IDs
+        # Instead of accumulating all chunks and embeddings in memory,
+        # files are processed incrementally and chunks are embedded and
+        # stored in ChromaDB in small, bounded batches (24 chunks).
+        # Memory usage remains O(batch_size) rather than O(repo_size).
         # ----------------------------------------------------
 
-        all_chunks = chunk_repository(
-            repository_path=repository_path,
-            repository_id=repository_id,
-            files=files
-        )
+        # Clear any existing index for this repository
+        vector_store.delete_repository(repository_id)
 
-        total_chunks = len(
-            all_chunks
-        )
+        CHUNK_BATCH_LIMIT = int(os.getenv("INDEXING_CHUNK_BATCH_SIZE", "24"))
+        chunk_buffer = []
+        total_chunks = 0
 
-        progress_service.update(
-            repository_id,
-            stage="chunking",
-            progress=50,
-            processed_files=total_files,
-            total_files=total_files,
-            processed_chunks=total_chunks,
-            total_chunks=total_chunks,
-            message=(
-                f"Created {total_chunks} "
-                "chunks."
+        for file_idx, file_path in enumerate(files):
+            file_chunks = chunk_file(
+                file_path=file_path,
+                repository_root=repository_path,
+                repository_id=repository_id
             )
-        )
+            if file_chunks:
+                chunk_buffer.extend(file_chunks)
 
-        # ----------------------------------------------------
-        # CHECK FOR EMPTY REPOSITORY
-        # ----------------------------------------------------
+            # When chunk buffer reaches threshold, embed and upsert immediately
+            if len(chunk_buffer) >= CHUNK_BATCH_LIMIT:
+                docs = [c["content"] for c in chunk_buffer]
+                embs = embedding_service.embed_documents(docs)
+                vector_store.add_chunks(repository_id, chunk_buffer, embs)
+                total_chunks += len(chunk_buffer)
 
+                chunk_buffer.clear()
+                docs.clear()
+                embs.clear()
+                gc.collect()
+
+                calc_progress = min(85, 30 + int(((file_idx + 1) / total_files) * 55))
+                progress_service.update(
+                    repository_id,
+                    stage="indexing",
+                    progress=calc_progress,
+                    processed_files=file_idx + 1,
+                    total_files=total_files,
+                    processed_chunks=total_chunks,
+                    total_chunks=total_chunks,
+                    message=f"Indexed {total_chunks} chunks ({file_idx + 1}/{total_files} files)..."
+                )
+
+        # Process any remaining chunks in final batch
+        if chunk_buffer:
+            docs = [c["content"] for c in chunk_buffer]
+            embs = embedding_service.embed_documents(docs)
+            vector_store.add_chunks(repository_id, chunk_buffer, embs)
+            total_chunks += len(chunk_buffer)
+            chunk_buffer.clear()
+            docs.clear()
+            embs.clear()
+            gc.collect()
+
+        # Check for empty repository
         if total_chunks == 0:
-
             progress_service.fail(
                 repository_id,
                 "No supported content was found to index."
             )
-
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "No supported content was "
-                    "found to index."
-                )
+                detail="No supported content was found to index."
             )
-
-        # ====================================================
-        # STEP 3: EMBEDDINGS
-        # ====================================================
-
-        progress_service.update(
-            repository_id,
-            stage="embedding",
-            progress=55,
-            processed_files=total_files,
-            total_files=total_files,
-            processed_chunks=0,
-            total_chunks=total_chunks,
-            message=(
-                "Generating embeddings..."
-            )
-        )
-
-        # Extract chunk content for embedding.
-        documents = [
-            chunk["content"]
-            for chunk in all_chunks
-        ]
-
-        # Generate embeddings using the existing
-        # EmbeddingService instance.
-        embeddings = (
-            embedding_service.embed_documents(
-                documents
-            )
-        )
-
-        # Validate embedding count.
-        if len(embeddings) != total_chunks:
-
-            raise ValueError(
-                "Embedding count does not match "
-                "chunk count."
-            )
-
-        progress_service.update(
-            repository_id,
-            stage="embedding",
-            progress=75,
-            processed_files=total_files,
-            total_files=total_files,
-            processed_chunks=total_chunks,
-            total_chunks=total_chunks,
-            message=(
-                "Embeddings generated successfully."
-            )
-        )
-
-        # ====================================================
-        # STEP 4: VECTOR DATABASE
-        # ====================================================
-
-        progress_service.update(
-            repository_id,
-            stage="indexing",
-            progress=80,
-            processed_files=total_files,
-            total_files=total_files,
-            processed_chunks=total_chunks,
-            total_chunks=total_chunks,
-            message=(
-                "Storing vectors in ChromaDB..."
-            )
-        )
-
-        # ----------------------------------------------------
-        # Remove previous index for this repository.
-        #
-        # This prevents duplicate chunks when the same
-        # repository is indexed again.
-        # ----------------------------------------------------
-
-        vector_store.delete_repository(
-            repository_id
-        )
-
-        # ----------------------------------------------------
-        # Store chunks + embeddings in ChromaDB.
-        # ----------------------------------------------------
-
-        vector_store.add_chunks(
-            repository_id,
-            all_chunks,
-            embeddings
-        )
 
         progress_service.update(
             repository_id,
@@ -1204,14 +1132,8 @@ def index_repository(
             total_files=total_files,
             processed_chunks=total_chunks,
             total_chunks=total_chunks,
-            message=(
-                "Repository indexed in ChromaDB."
-            )
+            message="Repository indexed in ChromaDB."
         )
-
-        # ====================================================
-        # STEP 5: COMPLETED
-        # ====================================================
 
         progress_service.complete(
             repository_id,
@@ -1221,16 +1143,10 @@ def index_repository(
             total_chunks=total_chunks
         )
 
-        # ----------------------------------------------------
-        # FINAL RESPONSE
-        # ----------------------------------------------------
-
         return {
             "repository_id": repository_id,
             "status": "completed",
-            "message": (
-                "Repository indexed successfully."
-            ),
+            "message": "Repository indexed successfully.",
             "total_files": total_files,
             "total_chunks": total_chunks
         }
@@ -1433,12 +1349,23 @@ if FRONTEND_DIR.exists():
 
 @app.on_event("startup")
 def startup_event():
+    port = os.getenv("PORT", "8000")
+    host = os.getenv("HOST", "0.0.0.0")
 
     print("")
     print("=" * 60)
     print("CodeLens AI started successfully!")
-    print("Live Application URL: http://127.0.0.1:8000")
-    print("API Documentation:    http://127.0.0.1:8000/docs")
-    print("Frontend Port 5500:   http://127.0.0.1:5500 (if running separately)")
+    print(f"Live Application URL: http://{host}:{port}")
+    print(f"API Documentation:    http://{host}:{port}/docs")
+    print("Worker mode:          Single worker (Render 512MB RAM optimized)")
+    print("Embedding loading:    Lazy on-demand (all-MiniLM-L6-v2)")
     print("=" * 60)
     print("")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", "8000"))
+    host = os.getenv("HOST", "0.0.0.0")
+    print(f"Starting single-worker Uvicorn server on {host}:{port}...")
+    uvicorn.run("main:app", host=host, port=port, workers=1, reload=False)

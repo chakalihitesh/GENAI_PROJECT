@@ -640,6 +640,25 @@ def chunk_file(
 # CHUNK REPOSITORY
 # ============================================================
 
+def iter_chunks_for_files(
+    repository_path: Path,
+    repository_id: str,
+    files: list[Path]
+):
+    """
+    Generator that yields chunks file by file to avoid loading all
+    repository chunks into memory simultaneously.
+    """
+    for file_path in files:
+        file_chunks = chunk_file(
+            file_path=file_path,
+            repository_root=repository_path,
+            repository_id=repository_id
+        )
+        for chunk in file_chunks:
+            yield chunk
+
+
 def chunk_repository(
     repository_path: Path,
     repository_id: str,
@@ -647,20 +666,12 @@ def chunk_repository(
 ) -> list[dict]:
     """
     Create chunks for all supported repository files.
+    Preserves list return type for existing callers and backward compatibility.
     """
-
-    all_chunks = []
-
-    for file_path in files:
-
-        file_chunks = chunk_file(
-            file_path=file_path,
-            repository_root=repository_path,
-            repository_id=repository_id
+    return list(
+        iter_chunks_for_files(
+            repository_path=repository_path,
+            repository_id=repository_id,
+            files=files
         )
-
-        all_chunks.extend(
-            file_chunks
-        )
-
-    return all_chunks
+    )
