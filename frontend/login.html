@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeLens AI — Sign In</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Night-Sky Theme Stylesheet -->
+    <link rel="stylesheet" href="auth.css">
+</head>
+<body>
+
+    <!-- ============================================================
+         PEACEFUL NIGHT-SKY BACKGROUND SCENERY
+         Glowing Moon, Soft Floating Clouds, Twinkling & Falling Stars
+    ============================================================ -->
+    <div class="night-sky" aria-hidden="true">
+        <!-- Glowing Moon -->
+        <div class="moon-container">
+            <div class="moon">
+                <div class="crater crater-1"></div>
+                <div class="crater crater-2"></div>
+                <div class="crater crater-3"></div>
+                <div class="crater crater-4"></div>
+            </div>
+        </div>
+
+        <!-- Soft Floating Clouds -->
+        <div class="cloud-layer">
+            <div class="cloud cloud-1"></div>
+            <div class="cloud cloud-2"></div>
+            <div class="cloud cloud-3"></div>
+            <div class="cloud cloud-4"></div>
+        </div>
+
+        <!-- Twinkling Star Field -->
+        <div class="star-field" id="starField">
+            <!-- Dynamically populated or static twinkling stars -->
+            <span class="star" style="top: 12%; left: 18%; width: 2px; height: 2px; animation-delay: 0.3s;"></span>
+            <span class="star" style="top: 25%; left: 32%; width: 3px; height: 3px; animation-delay: 1.2s;"></span>
+            <span class="star" style="top: 8%; left: 48%; width: 2px; height: 2px; animation-delay: 2.1s;"></span>
+            <span class="star" style="top: 19%; left: 62%; width: 2.5px; height: 2.5px; animation-delay: 0.7s;"></span>
+            <span class="star" style="top: 35%; left: 85%; width: 2px; height: 2px; animation-delay: 1.8s;"></span>
+            <span class="star" style="top: 45%; left: 12%; width: 2.5px; height: 2.5px; animation-delay: 2.5s;"></span>
+            <span class="star" style="top: 62%; left: 28%; width: 2px; height: 2px; animation-delay: 1.0s;"></span>
+            <span class="star" style="top: 78%; left: 8%; width: 3px; height: 3px; animation-delay: 0.5s;"></span>
+            <span class="star" style="top: 82%; left: 74%; width: 2px; height: 2px; animation-delay: 2.8s;"></span>
+            <span class="star" style="top: 68%; left: 88%; width: 2.5px; height: 2.5px; animation-delay: 1.4s;"></span>
+            <span class="star" style="top: 52%; left: 94%; width: 2px; height: 2px; animation-delay: 0.9s;"></span>
+            <span class="star" style="top: 15%; left: 78%; width: 2px; height: 2px; animation-delay: 2.3s;"></span>
+        </div>
+
+        <!-- Little Stars Gently Falling from the Sky -->
+        <div class="falling-star falling-star-1"></div>
+        <div class="falling-star falling-star-2"></div>
+        <div class="falling-star falling-star-3"></div>
+        <div class="falling-star falling-star-4"></div>
+        <div class="falling-star falling-star-5"></div>
+    </div>
+
+
+    <!-- ============================================================
+         AUTHENTICATION CARD
+    ============================================================ -->
+    <main class="auth-wrapper" role="main">
+        <section class="auth-card" aria-labelledby="authTitle">
+
+            <!-- Brand & App Identity -->
+            <header class="auth-header">
+                <a href="login.html" class="brand-link" aria-label="CodeLens AI Home">
+                    <div class="brand-mark">
+                        <i data-lucide="scan-search"></i>
+                    </div>
+                    <span class="brand-name">CODE LENS<span> AI</span></span>
+                </a>
+
+                <div class="auth-eyebrow">
+                    <i data-lucide="sparkles"></i>
+                    <span>AI-Powered Codebase Intelligence</span>
+                </div>
+
+                <h1 class="auth-title" id="authTitle">Welcome to CodeLense</h1>
+                <p class="auth-subtitle" id="authSubtitle">
+                    Sign in to explore, analyze, and query your code repositories.
+                </p>
+            </header>
+
+            <!-- Mode Selector Tabs (Sign In / Create Account) -->
+            <nav class="auth-mode-tabs" id="authModeTabs" aria-label="Authentication Options">
+                <button type="button" class="mode-tab active" id="tabSignIn" data-mode="signin" aria-selected="true">
+                    <i data-lucide="log-in"></i>
+                    <span>Sign In</span>
+                </button>
+                <button type="button" class="mode-tab" id="tabSignUp" data-mode="signup" aria-selected="false">
+                    <i data-lucide="user-plus"></i>
+                    <span>Create Account</span>
+                </button>
+            </nav>
+
+            <!-- ========================================================
+                 VIEW 1: SIGN IN & CREATE ACCOUNT PANEL
+            ========================================================= -->
+            <div class="view-panel" id="mainAuthPanel">
+
+                <!-- Google Sign-In Button -->
+                <button type="button" class="btn-google" id="googleBtn" aria-label="Sign in with Google">
+                    <svg class="google-icon" viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
+                        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
+                    </svg>
+                    <span id="googleBtnText">Continue with Google</span>
+                </button>
+
+                <!-- Divider -->
+                <div class="auth-divider">
+                    <span id="dividerText">or continue with email</span>
+                </div>
+
+                <!-- Alert Feedback Banner -->
+                <div class="auth-alert error" id="authErrorAlert" style="display: none;" role="alert">
+                    <i data-lucide="alert-circle"></i>
+                    <span id="authErrorText">Authentication failed</span>
+                </div>
+                <div class="auth-alert success" id="authSuccessAlert" style="display: none;" role="status">
+                    <i data-lucide="check-circle-2"></i>
+                    <span id="authSuccessText">Success</span>
+                </div>
+
+                <!-- Authentication Form -->
+                <form class="auth-form" id="authForm" novalidate>
+
+                    <!-- Email Address Field -->
+                    <div class="input-group">
+                        <label for="emailInput">Email address</label>
+                        <div class="input-with-icon">
+                            <i data-lucide="mail" class="leading-icon"></i>
+                            <input
+                                type="email"
+                                id="emailInput"
+                                class="text-input"
+                                placeholder="name@company.com"
+                                required
+                                autocomplete="email"
+                            >
+                        </div>
+                    </div>
+
+                    <!-- Password Field -->
+                    <div class="input-group">
+                        <div class="input-header">
+                            <label for="passwordInput">Password</label>
+                            <button type="button" class="forgot-link" id="forgotPasswordBtn">
+                                Forgot password?
+                            </button>
+                        </div>
+                        <div class="input-with-icon">
+                            <i data-lucide="lock" class="leading-icon"></i>
+                            <input
+                                type="password"
+                                id="passwordInput"
+                                class="text-input"
+                                placeholder="••••••••"
+                                required
+                                autocomplete="current-password"
+                                minlength="6"
+                            >
+                            <!-- Show / Hide Password Button -->
+                            <button
+                                type="button"
+                                class="password-toggle-btn"
+                                id="togglePasswordBtn"
+                                aria-label="Toggle password visibility"
+                                title="Show password"
+                            >
+                                <i data-lucide="eye" id="togglePasswordIcon"></i>
+                            </button>
+                        </div>
+                        <span class="input-hint" id="passwordHint" style="display: none;">Must be at least 6 characters</span>
+                    </div>
+
+                    <!-- Confirm Password Field (Create Account Only) -->
+                    <div class="input-group" id="confirmPasswordGroup" style="display: none;">
+                        <label for="confirmPasswordInput">Confirm password</label>
+                        <div class="input-with-icon">
+                            <i data-lucide="shield-check" class="leading-icon"></i>
+                            <input
+                                type="password"
+                                id="confirmPasswordInput"
+                                class="text-input"
+                                placeholder="••••••••"
+                                autocomplete="new-password"
+                                minlength="6"
+                            >
+                            <!-- Show / Hide Confirm Password Button -->
+                            <button
+                                type="button"
+                                class="password-toggle-btn"
+                                id="toggleConfirmPasswordBtn"
+                                aria-label="Toggle confirm password visibility"
+                                title="Show password"
+                            >
+                                <i data-lucide="eye" id="toggleConfirmPasswordIcon"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <button type="submit" class="btn-primary" id="submitBtn">
+                        <i data-lucide="log-in" id="submitIcon"></i>
+                        <span id="submitBtnText">Sign In</span>
+                    </button>
+
+                </form>
+
+                <!-- Footer Switcher -->
+                <div class="auth-footer" id="authFooter">
+                    <span id="footerPrompt">Don't have an account?</span>
+                    <button type="button" id="footerSwitchBtn">Sign up with Google</button>
+                </div>
+
+            </div>
+
+            <!-- ========================================================
+                 VIEW 2: FORGOT PASSWORD PANEL
+            ========================================================= -->
+            <div class="view-panel hidden" id="forgotPanel">
+
+                <div class="auth-alert error" id="forgotErrorAlert" style="display: none;" role="alert">
+                    <i data-lucide="alert-circle"></i>
+                    <span id="forgotErrorText">Reset failed</span>
+                </div>
+                <div class="auth-alert success" id="forgotSuccessAlert" style="display: none;" role="status">
+                    <i data-lucide="check-circle-2"></i>
+                    <span id="forgotSuccessText">Reset link sent!</span>
+                </div>
+
+                <form class="auth-form" id="forgotForm" novalidate>
+                    <div class="input-group">
+                        <label for="forgotEmailInput">Registered email address</label>
+                        <div class="input-with-icon">
+                            <i data-lucide="mail" class="leading-icon"></i>
+                            <input
+                                type="email"
+                                id="forgotEmailInput"
+                                class="text-input"
+                                placeholder="name@company.com"
+                                required
+                                autocomplete="email"
+                            >
+                        </div>
+                        <span class="input-hint">We will send a secure password reset link to this email.</span>
+                    </div>
+
+                    <button type="submit" class="btn-primary" id="forgotSubmitBtn">
+                        <i data-lucide="send" id="forgotSubmitIcon"></i>
+                        <span id="forgotSubmitText">Send Reset Link</span>
+                    </button>
+
+                    <button type="button" class="btn-secondary" id="backToSignInBtn">
+                        <i data-lucide="arrow-left"></i>
+                        <span>Back to Sign In</span>
+                    </button>
+                </form>
+
+            </div>
+
+        </section>
+    </main>
+
+    <!-- Firebase Authentication SDK Module -->
+    <script type="module" src="firebase.js"></script>
+
+    <!-- Authentication Logic & Form Controller -->
+    <script type="module" src="auth.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,773 @@
+/* ============================================================
+   CODELENS AI — NIGHT-SKY AUTHENTICATION THEME
+   Reuses the exact design tokens, typography, colors,
+   radii, and shadows from CodeLens styles.css
+============================================================ */
+
+:root {
+    --bg-primary: #090a0f;
+    --bg-secondary: #0d0f15;
+    --bg-tertiary: #12151d;
+    --bg-elevated: #151923;
+    --bg-hover: #1a1e29;
+
+    --text-primary: #f5f7fb;
+    --text-secondary: #a6adbb;
+    --text-muted: #6f7787;
+    --text-dim: #4e5665;
+
+    --accent: #8b5cf6;
+    --accent-light: #a78bfa;
+    --accent-blue: #6366f1;
+
+    --success: #34d399;
+    --warning: #fbbf24;
+    --danger: #fb7185;
+
+    --border: rgba(255, 255, 255, 0.075);
+    --border-strong: rgba(255, 255, 255, 0.12);
+
+    --shadow-sm: 0 4px 18px rgba(0, 0, 0, 0.18);
+    --shadow-lg: 0 24px 80px rgba(0, 0, 0, 0.35);
+
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-xl: 22px;
+
+    --font-ui: "Inter", sans-serif;
+    --font-code: "JetBrains Mono", monospace;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    min-height: 100vh;
+    font-family: var(--font-ui);
+    font-size: 14px;
+    color: var(--text-primary);
+    background-color: var(--bg-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow-x: hidden;
+    position: relative;
+    padding: 24px 16px;
+}
+
+/* ============================================================
+   PEACEFUL NIGHT-SKY SCENERY (MOON, CLOUDS, FALLING STARS)
+============================================================ */
+
+.night-sky {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 0;
+    background:
+        radial-gradient(ellipse at 75% 15%, rgba(99, 102, 241, 0.22) 0%, transparent 45%),
+        radial-gradient(ellipse at 25% 75%, rgba(139, 92, 246, 0.12) 0%, transparent 40%),
+        linear-gradient(180deg, #05070c 0%, #0a0d17 40%, #090a0f 100%);
+}
+
+/* 1. Glowing Moon */
+.moon-container {
+    position: absolute;
+    top: 7%;
+    right: 14%;
+    width: 90px;
+    height: 90px;
+    z-index: 1;
+}
+
+.moon {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #fffdfa 0%, #e2e8f0 45%, #cbd5e1 75%, #94a3b8 100%);
+    box-shadow:
+        0 0 20px rgba(255, 255, 255, 0.45),
+        0 0 50px rgba(167, 139, 250, 0.35),
+        0 0 100px rgba(99, 102, 241, 0.25),
+        inset -8px -8px 18px rgba(71, 85, 105, 0.4);
+    animation: moonGlow 7s ease-in-out infinite alternate;
+}
+
+@keyframes moonGlow {
+    0% {
+        box-shadow:
+            0 0 20px rgba(255, 255, 255, 0.4),
+            0 0 50px rgba(167, 139, 250, 0.3),
+            0 0 90px rgba(99, 102, 241, 0.2),
+            inset -8px -8px 18px rgba(71, 85, 105, 0.4);
+    }
+    100% {
+        box-shadow:
+            0 0 28px rgba(255, 255, 255, 0.6),
+            0 0 70px rgba(167, 139, 250, 0.45),
+            0 0 130px rgba(99, 102, 241, 0.3),
+            inset -8px -8px 18px rgba(71, 85, 105, 0.4);
+    }
+}
+
+/* Subtle moon craters */
+.crater {
+    position: absolute;
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 50%;
+    box-shadow: inset 1px 1px 2px rgba(51, 65, 85, 0.5);
+}
+.crater-1 { top: 22px; left: 24px; width: 14px; height: 14px; }
+.crater-2 { top: 46px; left: 48px; width: 18px; height: 18px; }
+.crater-3 { top: 52px; left: 22px; width: 10px; height: 10px; }
+.crater-4 { top: 28px; left: 56px; width: 8px; height: 8px; }
+
+/* 2. Soft Floating Clouds */
+.cloud-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 2;
+}
+
+.cloud {
+    position: absolute;
+    background: radial-gradient(ellipse at center, rgba(167, 139, 250, 0.16) 0%, rgba(99, 102, 241, 0.08) 50%, transparent 75%);
+    border-radius: 50%;
+    filter: blur(28px);
+    opacity: 0.75;
+}
+
+.cloud-1 {
+    top: 4%;
+    right: 8%;
+    width: 320px;
+    height: 120px;
+    animation: driftCloudSlow 45s ease-in-out infinite alternate;
+}
+
+.cloud-2 {
+    top: 18%;
+    left: 4%;
+    width: 440px;
+    height: 140px;
+    animation: driftCloudMed 55s ease-in-out infinite alternate;
+}
+
+.cloud-3 {
+    bottom: 12%;
+    right: 15%;
+    width: 500px;
+    height: 160px;
+    animation: driftCloudSlow 65s ease-in-out infinite alternate-reverse;
+}
+
+.cloud-4 {
+    bottom: 25%;
+    left: -5%;
+    width: 420px;
+    height: 150px;
+    animation: driftCloudMed 60s ease-in-out infinite alternate;
+}
+
+@keyframes driftCloudSlow {
+    0% { transform: translateX(0) translateY(0); }
+    100% { transform: translateX(45px) translateY(12px); }
+}
+
+@keyframes driftCloudMed {
+    0% { transform: translateX(0) translateY(0); }
+    100% { transform: translateX(-50px) translateY(-10px); }
+}
+
+/* 3. Twinkling Night Stars */
+.star-field {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+}
+
+.star {
+    position: absolute;
+    border-radius: 50%;
+    background-color: #ffffff;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+    animation: twinkle 4s ease-in-out infinite alternate;
+}
+
+@keyframes twinkle {
+    0% { opacity: 0.2; transform: scale(0.8); }
+    50% { opacity: 0.9; transform: scale(1.2); }
+    100% { opacity: 0.4; transform: scale(0.9); }
+}
+
+/* 4. Little Gently Falling Stars */
+.falling-star {
+    position: absolute;
+    width: 2.5px;
+    height: 2.5px;
+    background: #ffffff;
+    border-radius: 50%;
+    box-shadow: 0 0 8px 1px #ffffff, 0 0 18px 2px rgba(167, 139, 250, 0.8);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 2;
+}
+
+.falling-star::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%) rotate(-45deg);
+    width: 65px;
+    height: 1.5px;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.9), rgba(167, 139, 250, 0.4), transparent);
+    transform-origin: left center;
+}
+
+.falling-star-1 {
+    top: 6%;
+    left: 65%;
+    animation: fallStar 6.5s linear infinite;
+    animation-delay: 1s;
+}
+
+.falling-star-2 {
+    top: 14%;
+    left: 82%;
+    animation: fallStar 8s linear infinite;
+    animation-delay: 3.5s;
+}
+
+.falling-star-3 {
+    top: 22%;
+    left: 45%;
+    animation: fallStar 7.2s linear infinite;
+    animation-delay: 5s;
+}
+
+.falling-star-4 {
+    top: 30%;
+    left: 90%;
+    animation: fallStar 9s linear infinite;
+    animation-delay: 7.5s;
+}
+
+.falling-star-5 {
+    top: 10%;
+    left: 30%;
+    animation: fallStar 8.5s linear infinite;
+    animation-delay: 2s;
+}
+
+@keyframes fallStar {
+    0% {
+        transform: translate(0, 0) scale(0.3);
+        opacity: 0;
+    }
+    10% {
+        opacity: 1;
+        transform: translate(-30px, 35px) scale(1);
+    }
+    45% {
+        opacity: 0.8;
+        transform: translate(-140px, 160px) scale(0.9);
+    }
+    70% {
+        opacity: 0;
+        transform: translate(-220px, 250px) scale(0.2);
+    }
+    100% {
+        transform: translate(-220px, 250px) scale(0);
+        opacity: 0;
+    }
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+    .moon, .cloud, .falling-star, .star {
+        animation: none !important;
+    }
+    .falling-star {
+        display: none !important;
+    }
+}
+
+/* ============================================================
+   AUTHENTICATION CARD CONTAINER
+============================================================ */
+
+.auth-wrapper {
+    position: relative;
+    z-index: 10;
+    width: 100%;
+    max-width: 440px;
+    margin: auto;
+}
+
+.auth-card {
+    background: linear-gradient(180deg, rgba(23, 26, 35, 0.92) 0%, rgba(16, 18, 25, 0.96) 100%);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-xl);
+    box-shadow:
+        0 24px 80px rgba(0, 0, 0, 0.65),
+        0 0 0 1px rgba(255, 255, 255, 0.05),
+        0 0 40px rgba(99, 102, 241, 0.12);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    padding: 34px 30px;
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+/* Header */
+.auth-header {
+    text-align: center;
+    margin-bottom: 22px;
+}
+
+.brand-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+    margin-bottom: 14px;
+}
+
+.brand-mark {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-sm);
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-blue) 100%);
+    display: grid;
+    place-items: center;
+    color: #ffffff;
+    box-shadow: 0 8px 24px rgba(139, 92, 246, 0.35);
+}
+
+.brand-mark svg {
+    width: 20px;
+    height: 20px;
+}
+
+.brand-name {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+}
+
+.brand-name span {
+    color: var(--accent-light);
+    margin-left: 2px;
+}
+
+.auth-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: rgba(139, 92, 246, 0.12);
+    border: 1px solid rgba(139, 92, 246, 0.25);
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent-light);
+    margin-bottom: 12px;
+}
+
+.auth-eyebrow svg {
+    width: 13px;
+    height: 13px;
+}
+
+.auth-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+    letter-spacing: -0.01em;
+}
+
+.auth-subtitle {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+
+/* Mode Tabs */
+.auth-mode-tabs {
+    display: flex;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 4px;
+    margin-bottom: 20px;
+    gap: 4px;
+}
+
+.mode-tab {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.mode-tab:hover {
+    color: var(--text-primary);
+}
+
+.mode-tab.active {
+    background: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+.mode-tab svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* Google Sign-In Button */
+.btn-google {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 11px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #ffffff;
+    background: #1b1e2a;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-google:hover:not(:disabled) {
+    background: #232738;
+    border-color: rgba(255, 255, 255, 0.25);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+
+.btn-google:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.google-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+/* Divider */
+.auth-divider {
+    position: relative;
+    text-align: center;
+    margin: 20px 0 18px 0;
+}
+
+.auth-divider::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--border);
+    z-index: 1;
+}
+
+.auth-divider span {
+    position: relative;
+    z-index: 2;
+    background: #141720;
+    padding: 0 12px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* Alerts */
+.auth-alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 11px 13px;
+    margin-bottom: 16px;
+    border-radius: var(--radius-md);
+    font-size: 12.5px;
+    line-height: 1.45;
+}
+
+.auth-alert.error {
+    background: rgba(251, 113, 133, 0.12);
+    border: 1px solid rgba(251, 113, 133, 0.3);
+    color: #fca5a5;
+}
+
+.auth-alert.success {
+    background: rgba(52, 211, 153, 0.12);
+    border: 1px solid rgba(52, 211, 153, 0.3);
+    color: #86efac;
+}
+
+.auth-alert svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+/* Form inputs */
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.input-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.input-group label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.forgot-link {
+    font-size: 11.5px;
+    color: var(--accent-light);
+    text-decoration: none;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    transition: color 0.15s ease;
+}
+
+.forgot-link:hover {
+    color: #ffffff;
+    text-decoration: underline;
+}
+
+.input-with-icon {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.input-with-icon > svg.leading-icon {
+    position: absolute;
+    left: 13px;
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted);
+    pointer-events: none;
+    transition: color 0.15s ease;
+}
+
+.text-input {
+    width: 100%;
+    padding: 11px 40px 11px 38px;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--text-primary);
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.text-input::placeholder {
+    color: var(--text-dim);
+}
+
+.text-input:focus {
+    background: rgba(0, 0, 0, 0.45);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.18);
+}
+
+.text-input:focus ~ svg.leading-icon {
+    color: var(--accent-light);
+}
+
+/* Password Toggle Eye */
+.password-toggle-btn {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 6px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius-sm);
+    transition: color 0.15s ease;
+}
+
+.password-toggle-btn:hover {
+    color: var(--text-primary);
+}
+
+.password-toggle-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+.input-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* Primary Button */
+.btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 12px 18px;
+    margin-top: 4px;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #ffffff;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-blue) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 8px 24px rgba(99, 102, 241, 0.3);
+}
+
+.btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 30px rgba(99, 102, 241, 0.45);
+    filter: brightness(1.08);
+}
+
+.btn-primary:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-primary svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* Secondary Button */
+.btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+}
+
+/* Spinner */
+.spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #ffffff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Footer / Switch view */
+.auth-footer {
+    text-align: center;
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+    font-size: 12.5px;
+    color: var(--text-muted);
+}
+
+.auth-footer button {
+    background: none;
+    border: none;
+    color: var(--accent-light);
+    font-weight: 600;
+    cursor: pointer;
+    margin-left: 4px;
+    transition: color 0.15s ease;
+}
+
+.auth-footer button:hover {
+    color: #ffffff;
+    text-decoration: underline;
+}
+
+/* Forgot Password View Transition */
+.view-panel {
+    display: block;
+}
+
+.view-panel.hidden {
+    display: none;
+}
+
+/* Responsive */
+@media (max-width: 480px) {
+    .auth-card {
+        padding: 26px 20px;
+    }
+    .moon-container {
+        right: 8%;
+        width: 70px;
+        height: 70px;
+    }
+}

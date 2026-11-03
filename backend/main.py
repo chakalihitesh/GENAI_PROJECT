@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -40,6 +41,7 @@ from analysis.onboarding_analyzer import OnboardingAnalyzer
 from services.progress_service import progress_service
 from repository.chunker import chunk_repository
 from routers.file_search import router as file_search_router
+from routers.auth import router as auth_router
 # ============================================================
 # APP CONFIGURATION
 # ============================================================
@@ -53,6 +55,7 @@ app = FastAPI(
 
 # ============================================================
 app.include_router(file_search_router)
+app.include_router(auth_router)
 
 # CORS
 # ============================================================
@@ -1401,6 +1404,19 @@ def ask_repository(
             status_code=500,
             detail=str(exc),
         )
+
+
+# ============================================================
+# ============================================================
+# LOGIN ROUTE
+# ============================================================
+
+@app.get("/login")
+def login_route():
+    login_file = FRONTEND_DIR / "login.html"
+    if login_file.exists():
+        return FileResponse(str(login_file))
+    return FileResponse(str(FRONTEND_DIR / "index.html"))
 
 
 # ============================================================

@@ -4,6 +4,9 @@ import os
 
 # Disable ChromaDB telemetry to prevent network blocking on startup
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
+# Enable offline mode for Hugging Face Hub if offline
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 # backend/
 BASE_DIR = Path(__file__).resolve().parent

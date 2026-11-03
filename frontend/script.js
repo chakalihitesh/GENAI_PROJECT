@@ -104,6 +104,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initializeSuggestions();
     initializeTextarea();
     initializeHistory();
+    initializeFirebaseAuth();
 
     const saved = loadCurrentRepository();
 
@@ -1924,5 +1925,304 @@ function openConversationFromHistory(
         resizeTextarea(
             input
         );
+    }
+}
+
+// ============================================================
+// FIREBASE AUTHENTICATION UI INTEGRATION
+// ============================================================
+
+function initializeFirebaseAuth() {
+    const authModal = document.getElementById("authModal");
+    const closeAuthModal = document.getElementById("closeAuthModal");
+    const topbarSignInBtn = document.getElementById("topbarSignInBtn");
+    const userMenuWrapper = document.getElementById("userMenuWrapper");
+    const topbarAvatarButton = document.getElementById("topbarAvatarButton");
+    const topbarAvatarInitial = document.getElementById("topbarAvatarInitial");
+    const userDropdownMenu = document.getElementById("userDropdownMenu");
+    const dropdownUserName = document.getElementById("dropdownUserName");
+    const dropdownUserEmail = document.getElementById("dropdownUserEmail");
+    const dropdownLogoutBtn = document.getElementById("dropdownLogoutBtn");
+    const sidebarUserCard = document.getElementById("sidebarUserCard");
+    const sidebarUserAvatar = document.getElementById("sidebarUserAvatar");
+    const sidebarUserName = document.getElementById("sidebarUserName");
+    const sidebarUserEmail = document.getElementById("sidebarUserEmail");
+    const sidebarAuthActionBtn = document.getElementById("sidebarAuthActionBtn");
+
+    const authTabs = document.getElementById("authTabs");
+    const tabAuthSignIn = document.getElementById("tabAuthSignIn");
+    const tabAuthRegister = document.getElementById("tabAuthRegister");
+    const authModalTitle = document.getElementById("authModalTitle");
+    const authModalSubtitle = document.getElementById("authModalSubtitle");
+    const googleSignInBtn = document.getElementById("googleSignInBtn");
+    const authForm = document.getElementById("authForm");
+    const authEmail = document.getElementById("authEmail");
+    const authPassword = document.getElementById("authPassword");
+    const passwordHint = document.getElementById("passwordHint");
+    const authSubmitBtn = document.getElementById("authSubmitBtn");
+    const authSubmitText = document.getElementById("authSubmitText");
+    const authErrorAlert = document.getElementById("authErrorAlert");
+    const authErrorText = document.getElementById("authErrorText");
+
+    let currentAuthMode = "signin"; // "signin" or "register"
+
+    function openModal(mode = "signin") {
+        setAuthMode(mode);
+        hideError();
+        if (authForm) authForm.reset();
+        if (authModal) {
+            authModal.classList.add("visible");
+            authModal.setAttribute("aria-hidden", "false");
+        }
+    }
+
+    function closeModal() {
+        if (authModal) {
+            authModal.classList.remove("visible");
+            authModal.setAttribute("aria-hidden", "true");
+        }
+        hideError();
+    }
+
+    function setAuthMode(mode) {
+        currentAuthMode = mode;
+        if (tabAuthSignIn && tabAuthRegister) {
+            tabAuthSignIn.classList.toggle("active", mode === "signin");
+            tabAuthRegister.classList.toggle("active", mode === "register");
+        }
+        if (authModalTitle) {
+            authModalTitle.textContent = mode === "signin" ? "Welcome to CodeLens" : "Create an Account";
+        }
+        if (authModalSubtitle) {
+            authModalSubtitle.textContent = mode === "signin"
+                ? "Sign in to save your sessions and access repository intelligence."
+                : "Get started with AI-driven codebase understanding.";
+        }
+        if (authSubmitText) {
+            authSubmitText.textContent = mode === "signin" ? "Sign In" : "Create Account";
+        }
+        if (passwordHint) {
+            passwordHint.hidden = mode !== "register";
+        }
+        hideError();
+    }
+
+    function showError(msg) {
+        if (authErrorAlert && authErrorText) {
+            authErrorText.textContent = msg;
+            authErrorAlert.hidden = false;
+        }
+    }
+
+    function hideError() {
+        if (authErrorAlert) {
+            authErrorAlert.hidden = true;
+        }
+    }
+
+    // Modal Triggers
+    if (topbarSignInBtn) {
+        topbarSignInBtn.addEventListener("click", () => { window.location.href = "login.html"; });
+    }
+    if (sidebarUserCard) {
+        sidebarUserCard.addEventListener("click", (e) => {
+            if (e.target.closest("#sidebarAuthActionBtn")) return;
+            const currentUser = window.CodeLensAuth ? window.CodeLensAuth.getCurrentUser() : null;
+            if (!currentUser) {
+                window.location.href = "login.html";
+            } else if (userDropdownMenu) {
+                userDropdownMenu.hidden = !userDropdownMenu.hidden;
+            }
+        });
+    }
+    if (closeAuthModal) {
+        closeAuthModal.addEventListener("click", closeModal);
+    }
+    if (authModal) {
+        authModal.addEventListener("click", (e) => {
+            if (e.target === authModal) closeModal();
+        });
+    }
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && authModal && authModal.classList.contains("visible")) {
+            closeModal();
+        }
+    });
+
+    // Tab Switching
+    if (tabAuthSignIn) {
+        tabAuthSignIn.addEventListener("click", () => setAuthMode("signin"));
+    }
+    if (tabAuthRegister) {
+        tabAuthRegister.addEventListener("click", () => setAuthMode("register"));
+    }
+
+    // Topbar Avatar Menu Toggle
+    if (topbarAvatarButton && userDropdownMenu) {
+        topbarAvatarButton.addEventListener("click", (e) => {
+            e.stopPropagation();
+            userDropdownMenu.hidden = !userDropdownMenu.hidden;
+        });
+        document.addEventListener("click", (e) => {
+            if (!e.target.closest("#userMenuWrapper")) {
+                userDropdownMenu.hidden = true;
+            }
+        });
+    }
+
+    // Form Submit (Email & Password)
+    if (authForm) {
+        authForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            hideError();
+
+            const email = (authEmail ? authEmail.value : "").trim();
+            const password = (authPassword ? authPassword.value : "").trim();
+
+            if (!email || !password) {
+                showError("Please enter both email and password.");
+                return;
+            }
+
+            if (authSubmitBtn) {
+                authSubmitBtn.disabled = true;
+                if (authSubmitText) authSubmitText.textContent = "Processing...";
+            }
+
+            try {
+                if (!window.CodeLensAuth) {
+                    showError("Authentication service is initializing. Please try again.");
+                    return;
+                }
+
+                let res;
+                if (currentAuthMode === "register") {
+                    res = await window.CodeLensAuth.registerUser(email, password);
+                } else {
+                    res = await window.CodeLensAuth.loginUser(email, password);
+                }
+
+                if (res && res.success) {
+                    closeModal();
+                    const name = res.user.displayName || res.user.email || "User";
+                    showToast(currentAuthMode === "register" ? `Account created! Welcome, ${name}` : `Welcome back, ${name}`);
+                } else {
+                    showError(res ? res.error : "Authentication failed.");
+                }
+            } catch (err) {
+                showError(err.message || "An unexpected authentication error occurred.");
+            } finally {
+                if (authSubmitBtn) {
+                    authSubmitBtn.disabled = false;
+                    if (authSubmitText) {
+                        authSubmitText.textContent = currentAuthMode === "signin" ? "Sign In" : "Create Account";
+                    }
+                }
+            }
+        });
+    }
+
+    // Google Sign-In
+    if (googleSignInBtn) {
+        googleSignInBtn.addEventListener("click", async () => {
+            hideError();
+            googleSignInBtn.disabled = true;
+
+            try {
+                if (!window.CodeLensAuth) {
+                    showError("Authentication service is initializing. Please try again.");
+                    return;
+                }
+
+                const res = await window.CodeLensAuth.googleLogin();
+                if (res && res.success) {
+                    closeModal();
+                    const name = res.user.displayName || res.user.email || "User";
+                    showToast(`Signed in with Google as ${name}`);
+                } else {
+                    showError(res ? res.error : "Google sign-in failed.");
+                }
+            } catch (err) {
+                showError(err.message || "Google sign-in failed.");
+            } finally {
+                googleSignInBtn.disabled = false;
+            }
+        });
+    }
+
+    // Logout Action
+    const handleLogout = async () => {
+        if (!window.CodeLensAuth) return;
+        if (userDropdownMenu) userDropdownMenu.hidden = true;
+        await window.CodeLensAuth.logoutUser();
+        window.location.replace("login.html");
+    };
+
+    if (dropdownLogoutBtn) {
+        dropdownLogoutBtn.addEventListener("click", handleLogout);
+    }
+    if (sidebarAuthActionBtn) {
+        sidebarAuthActionBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            handleLogout();
+        });
+    }
+
+    // Auth State Observer (Enforces Sign-in Requirement)
+    const updateUIForUser = (user) => {
+        const authGuardCurtain = document.getElementById("authGuardCurtain");
+
+        if (user) {
+            // User authenticated: Mark authenticated & lift the curtain
+            window._codelensUserAuthenticated = true;
+            if (window._authTimeout) clearTimeout(window._authTimeout);
+
+            if (authGuardCurtain) {
+                authGuardCurtain.style.opacity = "0";
+                authGuardCurtain.style.pointerEvents = "none";
+                setTimeout(() => {
+                    if (authGuardCurtain && authGuardCurtain.parentNode) {
+                        authGuardCurtain.parentNode.removeChild(authGuardCurtain);
+                    }
+                }, 320);
+            }
+
+            const displayName = user.displayName || (user.email ? user.email.split("@")[0] : "User");
+            const initial = displayName.charAt(0).toUpperCase();
+
+            if (topbarSignInBtn) topbarSignInBtn.style.display = "none";
+            if (userMenuWrapper) {
+                userMenuWrapper.hidden = false;
+                userMenuWrapper.style.display = "inline-block";
+            }
+            if (userMenuWrapper) userMenuWrapper.hidden = false;
+            if (topbarAvatarInitial) topbarAvatarInitial.textContent = initial;
+
+            if (dropdownUserName) dropdownUserName.textContent = displayName;
+            if (dropdownUserEmail) dropdownUserEmail.textContent = user.email || "";
+
+            if (sidebarUserName) sidebarUserName.textContent = displayName;
+            if (sidebarUserEmail) sidebarUserEmail.textContent = user.email || "Authenticated";
+            if (sidebarAuthActionBtn) sidebarAuthActionBtn.hidden = false;
+            if (sidebarUserAvatar) sidebarUserAvatar.textContent = initial;
+        } else {
+            // User not authenticated: Web application will NOT open until signed in
+            window._codelensUserAuthenticated = false;
+            window.location.replace("login.html");
+            return;
+        }
+        if (typeof lucide !== "undefined") lucide.createIcons();
+    };
+
+    if (window.CodeLensAuth && typeof window.CodeLensAuth.onAuthChange === "function") {
+        window.CodeLensAuth.onAuthChange(updateUIForUser);
+    } else {
+        const interval = setInterval(() => {
+            if (window.CodeLensAuth && typeof window.CodeLensAuth.onAuthChange === "function") {
+                clearInterval(interval);
+                window.CodeLensAuth.onAuthChange(updateUIForUser);
+            }
+        }, 100);
+        setTimeout(() => clearInterval(interval), 5000);
     }
 }

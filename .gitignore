@@ -2,6 +2,9 @@
 .env
 .env.*
 !.env.example
+*serviceAccountKey*.json
+*.pem
+*.key
 
 # Python virtual environments
 venv/
