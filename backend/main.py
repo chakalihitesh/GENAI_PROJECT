@@ -80,7 +80,7 @@ app.add_middleware(
         "https://genaiproject-frontend.vercel.app",
         "https://genai-project-frontend.vercel.app",
     ],
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$|^https://.*\.vercel\.app$",
+    allow_origin_regex=r"^https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -250,6 +250,15 @@ async def upload_repository(
             file
         )
 
+        progress_service.initialize(repository["repository_id"])
+        progress_service.update(
+            repository["repository_id"],
+            status="uploaded",
+            stage="uploaded",
+            progress=10,
+            message="Repository uploaded successfully. Ready for indexing.",
+        )
+
         return {
             "message": "Repository uploaded successfully.",
             "repository_id": repository["repository_id"],
@@ -330,6 +339,14 @@ async def upload_folder(
             raise ValueError("No supported files found in the uploaded folder.")
 
         repository_info = get_repository_info(repository_path)
+        progress_service.initialize(repository_id)
+        progress_service.update(
+            repository_id,
+            status="uploaded",
+            stage="uploaded",
+            progress=10,
+            message="Folder uploaded successfully. Ready for indexing.",
+        )
         return {
             "message": "Folder uploaded successfully.",
             "repository_id": repository_id,
@@ -407,6 +424,14 @@ async def import_github_repository(payload: GitHubImportRequest):
         )
 
         repository_info = get_repository_info(repository_path)
+        progress_service.initialize(repository_id)
+        progress_service.update(
+            repository_id,
+            status="uploaded",
+            stage="uploaded",
+            progress=10,
+            message="Repository imported successfully from GitHub. Ready for indexing.",
+        )
         return {
             "message": "Repository imported successfully from GitHub.",
             "repository_id": repository_id,
@@ -1213,19 +1238,53 @@ def index_repository(
 def get_repository_progress(repository_id: str):
     """
     Return the current indexing progress of a repository.
+    Handles in-memory tracking as well as on-disk existing repositories.
     """
+    progress = progress_service.get(repository_id)
+    if progress is not None:
+        return progress
 
-    progress = progress_service.get(
-        repository_id
-    )
-
-    if progress is None:
+    repository_path = REPOSITORIES_DIR / repository_id
+    if not repository_path.exists() or not repository_path.is_dir():
         raise HTTPException(
             status_code=404,
-            detail="No progress information found for this repository.",
+            detail=f"Repository '{repository_id}' does not exist on server. Please click '+ New repository' to re-import.",
         )
 
-    return progress
+    try:
+        collection = vector_store.get_collection(repository_id)
+        chunk_count = collection.count()
+    except Exception:
+        chunk_count = 0
+
+    if chunk_count > 0:
+        completed_info = {
+            "repository_id": repository_id,
+            "status": "completed",
+            "stage": "completed",
+            "progress": 100,
+            "processed_chunks": chunk_count,
+            "total_chunks": chunk_count,
+            "message": "Repository is indexed and ready.",
+            "exists": True,
+        }
+        progress_service.update(
+            repository_id,
+            status="completed",
+            stage="completed",
+            progress=100,
+            message="Repository is indexed and ready.",
+        )
+        return completed_info
+
+    return {
+        "repository_id": repository_id,
+        "status": "ready_for_indexing",
+        "stage": "uploaded",
+        "progress": 10,
+        "message": "Repository files uploaded, ready for indexing.",
+        "exists": True,
+    }
 # ============================================================
 # SEMANTIC SEARCH
 # ============================================================

@@ -12,6 +12,14 @@ const HISTORY_KEY = "codelens_history";
 let selectedRepositoryFile = null;
 let currentRepository = null;
 let isBusy = false;
+let activeProgressPoller = null;
+
+function stopActiveProgressPoller() {
+    if (activeProgressPoller) {
+        clearInterval(activeProgressPoller);
+        activeProgressPoller = null;
+    }
+}
 
 async function readApiResponse(response) {
     const text = await response.text();
@@ -230,6 +238,7 @@ function initializeUploadModal() {
 
     const closeModal = () => {
         if (isBusy) return;
+        stopActiveProgressPoller();
         modal.classList.remove("visible");
         modal.setAttribute("aria-hidden", "true");
     };
@@ -553,33 +562,75 @@ async function handleRepositoryProcess(params) {
         // Real-time UI preliminary update
         updateRepositoryUI(state);
 
-        // Start live indexing progress polling
-        let progressPoller = null;
+        // Start live indexing progress polling with graceful completion & error handling
         let isDone = false;
+        let consecutiveErrors = 0;
+
+        const stopPolling = () => {
+            isDone = true;
+            stopActiveProgressPoller();
+        };
 
         const startPolling = () => {
-            progressPoller = setInterval(async () => {
-                if (isDone) return;
+            stopPolling();
+            isDone = false;
+            consecutiveErrors = 0;
+
+            activeProgressPoller = setInterval(async () => {
+                if (isDone) {
+                    stopPolling();
+                    return;
+                }
                 try {
                     const pRes = await fetch(`${CODELENS_API_BASE}/api/repositories/${encodeURIComponent(repositoryId)}/progress`);
-                    if (pRes.ok) {
-                        const pData = await pRes.json();
-                        const pct = Math.max(10, pData.progress || 0);
-                        const msg = pData.message || "Indexing...";
-                        const stage = pData.stage || "indexing";
+                    
+                    if (pRes.status === 404) {
+                        // Repository not found on server — STOP POLLING IMMEDIATELY
+                        stopPolling();
+                        const errData = await readApiResponse(pRes);
+                        const errMsg = apiError(errData, "Repository not found on server.");
+                        console.warn("Repository progress 404:", errMsg);
+                        if (progressMessage) progressMessage.textContent = errMsg;
+                        return;
+                    }
 
-                        if (progressFill) progressFill.style.width = `${pct}%`;
-                        if (progressPercent) progressPercent.textContent = `${pct}%`;
-                        if (progressMessage) progressMessage.textContent = msg;
+                    if (!pRes.ok) {
+                        consecutiveErrors++;
+                        if (consecutiveErrors >= 5) {
+                            console.warn("Too many consecutive progress polling errors. Stopping poller.");
+                            stopPolling();
+                        }
+                        return;
+                    }
 
-                        button.innerHTML = `<i data-lucide="loader-circle" class="codelens-spinner"></i> ${msg} (${pct}%)`;
-                        refreshIcons();
-                        updateStagePills(stage);
+                    consecutiveErrors = 0;
+                    const pData = await pRes.json();
+                    const pct = Math.max(10, Math.min(100, pData.progress || 0));
+                    const msg = pData.message || "Indexing...";
+                    const stage = pData.stage || "indexing";
+
+                    if (progressFill) progressFill.style.width = `${pct}%`;
+                    if (progressPercent) progressPercent.textContent = `${pct}%`;
+                    if (progressMessage) progressMessage.textContent = msg;
+
+                    button.innerHTML = `<i data-lucide="loader-circle" class="codelens-spinner"></i> ${escapeHtml(msg)} (${pct}%)`;
+                    refreshIcons();
+                    updateStagePills(stage);
+
+                    // Stop polling if completed or failed
+                    if (pData.status === "completed" || stage === "completed" || pct >= 100) {
+                        stopPolling();
+                    } else if (pData.status === "failed" || stage === "failed") {
+                        stopPolling();
+                        if (progressMessage) progressMessage.textContent = pData.message || "Indexing failed.";
                     }
                 } catch (e) {
-                    // ignore polling errors
+                    consecutiveErrors++;
+                    if (consecutiveErrors >= 5) {
+                        stopPolling();
+                    }
                 }
-            }, 500);
+            }, 1000);
         };
 
         startPolling();
@@ -593,8 +644,7 @@ async function handleRepositoryProcess(params) {
             { method: "POST" }
         );
 
-        isDone = true;
-        if (progressPoller) clearInterval(progressPoller);
+        stopPolling();
 
         const indexData = await readApiResponse(indexResponse);
         if (!indexResponse.ok) {
@@ -625,6 +675,7 @@ async function handleRepositoryProcess(params) {
         }, 900);
 
     } catch (error) {
+        stopActiveProgressPoller();
         console.error("Repository processing error:", error);
         button.disabled = false;
         button.innerHTML = '<i data-lucide="scan-search"></i> Analyze repository';
@@ -632,6 +683,7 @@ async function handleRepositoryProcess(params) {
         if (progressContainer) progressContainer.hidden = true;
         showToast(error.message || "Failed to process repository.", true);
     } finally {
+        stopActiveProgressPoller();
         isBusy = false;
     }
 }
@@ -900,6 +952,11 @@ async function askCodeLens(
         thinking.remove();
 
         if (!response.ok) {
+            if (response.status === 404) {
+                // If repository is missing on server (e.g. Render spin-down), clear stale repository from localStorage
+                localStorage.removeItem(CURRENT_REPOSITORY_KEY);
+                currentRepository = null;
+            }
             throw new Error(
                 apiError(
                     data,
@@ -927,10 +984,12 @@ async function askCodeLens(
     } catch (error) {
         thinking.remove();
 
-        appendErrorMessage(
-            error.message ||
-            "Unable to reach CodeLens."
-        );
+        let displayMsg = error.message || "Unable to reach CodeLens.";
+        if (displayMsg === "Failed to fetch" || error.name === "TypeError") {
+            displayMsg = "Unable to connect to CodeLens backend. The server may be waking up (cold start) or unreachable. Please wait 15-20 seconds and try again.";
+        }
+
+        appendErrorMessage(displayMsg);
 
         console.error(
             "CodeLens request error:",
