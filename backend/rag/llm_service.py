@@ -22,8 +22,8 @@ class LLMService:
     from mentions of questions, tests, documentation, or examples.
     """
 
-    PRIMARY_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-    FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "llama-3.1-8b-instant")
+    PRIMARY_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "qwen/qwen3.8-27b")
 
     MAX_RETRIES_PER_MODEL = 2
     RETRY_DELAY_SECONDS = 1
@@ -51,8 +51,10 @@ class LLMService:
         self.models = [
             self.PRIMARY_MODEL,
             self.FALLBACK_MODEL,
-            "llama-3.1-70b-versatile",
-            "mixtral-8x7b-32768",
+            "openai/gpt-oss-20b",
+            "qwen/qwen3.8-27b",
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
         ]
 
         print(
@@ -248,6 +250,13 @@ Answer the user's question clearly, thoroughly, and accurately using the reposit
                         raise RuntimeError(
                             "Invalid GROQ_API_KEY: please verify your Groq API key in .env"
                         ) from error
+
+                    if "model_not_found" in err_msg or "does not exist" in err_msg:
+                        print(
+                            f"Groq model {model_name} not available on this account. "
+                            "Switching immediately to next model..."
+                        )
+                        break
 
                     if "rate_limit_exceeded" in err_msg or "429" in err_msg:
                         print(

@@ -1,3 +1,4 @@
+from pathlib import Path
 from rag.search_service import SearchService
 from rag.llm_service import LLMService
 from config import REPOSITORIES_DIR

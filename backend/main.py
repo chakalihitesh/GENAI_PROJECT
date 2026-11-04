@@ -163,24 +163,36 @@ def health_groq():
             from groq import Groq
             llm_service.client = Groq(api_key=api_key)
 
-        model_to_test = llm_service.PRIMARY_MODEL
-        response = llm_service.client.chat.completions.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": "Respond with the single word 'ready'.",
-                }
-            ],
-            model=model_to_test,
-            max_tokens=60,
-        )
+        working_model = None
+        reply = ""
+        last_err = None
 
-        reply = response.choices[0].message.content.strip() if response.choices else ""
+        for model_to_test in llm_service.models:
+            try:
+                response = llm_service.client.chat.completions.create(
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": "Respond with the single word 'ready'.",
+                        }
+                    ],
+                    model=model_to_test,
+                    max_tokens=60,
+                )
+                reply = response.choices[0].message.content.strip() if response.choices else ""
+                working_model = model_to_test
+                break
+            except Exception as test_err:
+                last_err = test_err
+                continue
+
+        if not working_model:
+            raise last_err or RuntimeError("All Groq models failed health check.")
 
         return {
             "status": "healthy",
             "service": "groq",
-            "model": model_to_test,
+            "model": working_model,
             "response": reply[:50],
             "message": "Groq API integration verified successfully.",
         }
