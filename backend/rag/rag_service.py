@@ -280,6 +280,22 @@ class RAGService:
                     file_sample = [f["path"] for f in all_files[:40]]
                     overview_lines.append("Repository File List:\n" + "\n".join(f"- {p}" for p in file_sample))
 
+                    # Read repository README if present to ground project description questions
+                    for f in all_files:
+                        if Path(f["path"]).name.lower().startswith("readme"):
+                            try:
+                                r_path = repo_root / f["path"]
+                                if r_path.is_file():
+                                    r_text = r_path.read_text(encoding="utf-8", errors="ignore").strip()
+                                    if r_text:
+                                        r_excerpt = "\n".join(r_text.splitlines()[:60])
+                                        if len(r_excerpt) > 2000:
+                                            r_excerpt = r_excerpt[:2000] + "..."
+                                        overview_lines.insert(1, f"README ({f['path']}):\n{r_excerpt}")
+                                        break
+                            except Exception as r_err:
+                                print(f"README reading error: {r_err}")
+
                     file_chunks.insert(0, {
                         "content": "REPOSITORY OVERVIEW & FILE INVENTORY:\n" + "\n".join(overview_lines),
                         "metadata": {

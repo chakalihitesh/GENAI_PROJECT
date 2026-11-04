@@ -169,7 +169,7 @@ Answer the user's question clearly, thoroughly, and accurately using the reposit
                 self.client = Groq(api_key=api_key)
             else:
                 raise RuntimeError(
-                    "GROQ_API_KEY is missing. Add it to the backend .env file."
+                    "GROQ_API_KEY is missing. If deployed on Render, add GROQ_API_KEY under 'Environment Variables' in your Render Dashboard. For local development, add GROQ_API_KEY to your .env file."
                 )
 
         last_error = None
@@ -248,6 +248,13 @@ Answer the user's question clearly, thoroughly, and accurately using the reposit
                         raise RuntimeError(
                             "Invalid GROQ_API_KEY: please verify your Groq API key in .env"
                         ) from error
+
+                    if "rate_limit_exceeded" in err_msg or "429" in err_msg:
+                        print(
+                            f"Groq model {model_name} hit rate limit (429). "
+                            "Switching immediately to fallback model..."
+                        )
+                        break
 
                     if (
                         attempt
