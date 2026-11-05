@@ -10,7 +10,7 @@ MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 # Number of documents embedded in one batch.
 # Kept to 16 by default to stay within Render 512MB RAM constraints.
-EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "16"))
+EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "8"))
 
 
 class EmbeddingService:
@@ -59,7 +59,10 @@ class EmbeddingService:
                     import torch
                     from sentence_transformers import SentenceTransformer
 
-# PyTorch thread constraints handled safely via config.py (OMP_NUM_THREADS=1)
+                    try:
+                        torch.set_num_threads(1)
+                    except Exception:
+                        pass
 
                     try:
                         loaded = SentenceTransformer(self.model_name, local_files_only=True)

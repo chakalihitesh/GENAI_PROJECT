@@ -8,6 +8,17 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
 import os
+
+# Limit CPU threads and memory allocations before any C++ libraries load
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("HF_HUB_OFFLINE", "0")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "0")
+
 import gc
 import traceback
 import asyncio
@@ -374,6 +385,7 @@ async def upload_folder(
 # ============================================================
 
 @app.post("/api/repositories/github")
+@app.post("/api/repositories/import")
 async def import_github_repository(payload: GitHubImportRequest):
     """
     Import a repository directly from a public HTTPS GitHub URL.
@@ -1120,7 +1132,7 @@ def index_repository(
         # Clear any prior index for this repository
         vector_store.delete_repository(repository_id)
 
-        CHUNK_BATCH_LIMIT = int(os.getenv("INDEXING_CHUNK_BATCH_SIZE", "16"))
+        CHUNK_BATCH_LIMIT = int(os.getenv("INDEXING_CHUNK_BATCH_SIZE", "8"))
         chunk_buffer = []
         total_chunks = 0
 

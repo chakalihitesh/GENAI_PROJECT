@@ -5,8 +5,8 @@ import os
 # Disable ChromaDB telemetry to prevent network blocking on startup
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 # Enable offline mode for Hugging Face Hub if offline (can be overridden with HF_HUB_OFFLINE=0 on Render)
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("HF_HUB_OFFLINE", "0")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "0")
 
 # Limit PyTorch CPU threads & Hugging Face tokenizers to 1 worker to prevent memory bloat on Render free tier (512MB RAM)
 os.environ.setdefault("OMP_NUM_THREADS", "1")
