@@ -766,12 +766,38 @@ async function handleRepositoryProcess(params) {
             { method: "POST" }
         );
 
-        stopPolling();
-
         const indexData = await readApiResponse(indexResponse);
         if (!indexResponse.ok) {
+            stopPolling();
             throw new Error(apiError(indexData, "Repository indexing failed."));
         }
+
+        // Wait until polling confirms indexing has completed in the background
+        await new Promise((resolve, reject) => {
+            const checkInterval = setInterval(async () => {
+                try {
+                    const pRes = await fetch(`${CODELENS_API_BASE}/api/repositories/${encodeURIComponent(repositoryId)}/progress`);
+                    if (pRes.ok) {
+                        const pData = await pRes.json();
+                        if (pData.status === "completed" || pData.stage === "completed" || (pData.progress || 0) >= 100) {
+                            clearInterval(checkInterval);
+                            resolve();
+                        } else if (pData.status === "failed") {
+                            clearInterval(checkInterval);
+                            reject(new Error(pData.message || "Indexing failed."));
+                        }
+                    }
+                } catch (_) {}
+            }, 1500);
+
+            // Safety timeout after 4 minutes
+            setTimeout(() => {
+                clearInterval(checkInterval);
+                resolve();
+            }, 240000);
+        });
+
+        stopPolling();
 
         // Finalize Progress Bar
         updateStagePills("completed");

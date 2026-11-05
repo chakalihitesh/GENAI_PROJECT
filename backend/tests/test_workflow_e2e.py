@@ -59,7 +59,7 @@ def test_complete_e2e_workflow():
     assert p0_data["repository_id"] == repo_id
 
     print("\n--- STEP 3: Indexing ---")
-    index_resp = client.post(f"/api/repositories/{repo_id}/index")
+    index_resp = client.post(f"/api/repositories/{repo_id}/index?sync=true")
     assert index_resp.status_code == 200, index_resp.text
     index_data = index_resp.json()
     assert index_data["status"] == "completed"

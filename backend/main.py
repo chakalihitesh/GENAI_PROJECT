@@ -27,7 +27,7 @@ import shutil
 import subprocess
 from pathlib import Path
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -1054,32 +1054,11 @@ def analyze_onboarding(
 # INDEX REPOSITORY
 # ============================================================
 
-@app.post(
-    "/api/repositories/{repository_id}/index"
-)
-def index_repository(
-    repository_id: str
-):
+def _execute_indexing_job(repository_id: str):
     """
-    Index an uploaded or cloned repository into the vector database.
-    Guards against duplicate indexing jobs, runs asynchronously with event-loop yields,
-    and updates progress safely across pending, scanning, chunking, embedding, completed, and failed states.
+    Worker function executed in the background to chunk, embed, and store
+    repository data safely without blocking HTTP response or timing out proxies.
     """
-    # Prevent duplicate concurrent indexing jobs on the same repository
-    if not progress_service.acquire_indexing(repository_id):
-        # A job is already active for this repository. Await its completion rather than duplicating
-        import time
-        while progress_service.is_indexing(repository_id):
-            time.sleep(0.5)
-        current = progress_service.get(repository_id)
-        if current and current.get("status") == "failed":
-            raise HTTPException(status_code=500, detail=current.get("message", "Indexing failed."))
-        return current or {
-            "repository_id": repository_id,
-            "status": "completed",
-            "message": "Repository indexed successfully.",
-        }
-
     try:
         repository_path = REPOSITORIES_DIR / repository_id
 
@@ -1232,6 +1211,59 @@ def index_repository(
 
     finally:
         progress_service.release_indexing(repository_id)
+
+
+@app.post("/api/repositories/{repository_id}/index")
+def index_repository(
+    repository_id: str,
+    background_tasks: BackgroundTasks,
+    sync: bool = False
+):
+    """
+    Index a repository in the background.
+    Responds immediately with 200 OK to prevent Render reverse proxy 502/504 timeouts,
+    while running the indexing pipeline asynchronously.
+    """
+    repository_path = REPOSITORIES_DIR / repository_id
+    if not repository_path.exists() or not repository_path.is_dir():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Repository '{repository_id}' does not exist on server. Please click '+ New repository' to re-import or upload your project."
+        )
+
+    # Check if already completed
+    current = progress_service.get(repository_id)
+    if current and current.get("status") == "completed":
+        return current
+
+    # Guard against duplicate concurrent jobs
+    if not progress_service.acquire_indexing(repository_id):
+        return current or {
+            "repository_id": repository_id,
+            "status": "indexing",
+            "stage": "indexing",
+            "message": "Indexing is already running in background.",
+        }
+
+    progress_service.update(
+        repository_id,
+        status="indexing",
+        stage="scanning",
+        progress=15,
+        message="Scanning repository files...",
+    )
+
+    if sync:
+        return _execute_indexing_job(repository_id)
+
+    background_tasks.add_task(_execute_indexing_job, repository_id)
+    return {
+        "repository_id": repository_id,
+        "status": "indexing",
+        "stage": "scanning",
+        "progress": 15,
+        "message": "Repository indexing started in background.",
+    }
 
 
 # ============================================================
