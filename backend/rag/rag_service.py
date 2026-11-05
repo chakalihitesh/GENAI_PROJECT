@@ -27,7 +27,7 @@ class RAGService:
     """
 
     # Maximum amount of repository context sent to LLM.
-    MAX_CONTEXT_CHARACTERS = 24000
+    MAX_CONTEXT_CHARACTERS = 10000
 
     def __init__(
         self,
