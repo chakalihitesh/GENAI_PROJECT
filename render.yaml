@@ -4,7 +4,7 @@ services:
     env: python
     plan: free
     region: oregon
-    buildCommand: pip install torch --index-url https://download.pytorch.org/whl/cpu && pip install -r requirements.txt
+    buildCommand: pip install torch --index-url https://download.pytorch.org/whl/cpu && pip install -r requirements.txt && python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1
     healthCheckPath: /health
     envVars:
@@ -15,11 +15,11 @@ services:
       - key: TRANSFORMERS_OFFLINE
         value: "0"
       - key: EMBEDDING_BATCH_SIZE
-        value: "16"
+        value: "8"
       - key: INDEXING_CHUNK_BATCH_SIZE
-        value: "24"
+        value: "8"
       - key: VECTOR_BATCH_SIZE
-        value: "50"
+        value: "16"
       - key: TOKENIZERS_PARALLELISM
         value: "false"
       - key: OMP_NUM_THREADS

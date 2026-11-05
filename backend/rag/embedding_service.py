@@ -9,7 +9,7 @@ import threading
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 # Number of documents embedded in one batch.
-# Kept to 16 by default to stay within Render 512MB RAM constraints.
+# Kept to 8 by default to stay within Render 512MB RAM constraints.
 EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "8"))
 
 
@@ -18,7 +18,9 @@ class EmbeddingService:
     Create embeddings for CodeLens AI code chunks.
 
     Optimized for memory-constrained environments (e.g. Render 512 MB RAM):
-    - Loads the all-MiniLM-L6-v2 model on-demand (lazy loading), not at startup.
+    - Prioritizes Gemini Cloud Embeddings (text-embedding-004) when GEMINI_API_KEY is present
+      (0 MB server RAM consumption, eliminates Render OOM crashes).
+    - Falls back cleanly to sentence-transformers/all-MiniLM-L6-v2 on-demand (lazy loaded).
     - Forces single-threaded PyTorch execution to eliminate thread pool memory overhead.
     - Uses torch.inference_mode() to prevent autograd graph allocations.
     - Processes documents in small batches and explicitly triggers garbage collection.
@@ -40,7 +42,46 @@ class EmbeddingService:
         self._lock = threading.Lock()
 
     # ========================================================
-    # LAZY MODEL INITIALIZATION
+    # GEMINI CLOUD EMBEDDINGS (ZERO SERVER RAM OVERHEAD)
+    # ========================================================
+
+    def _embed_gemini(self, documents: list[str]) -> list[list[float]]:
+        """
+        Embed documents via Google Gemini text-embedding-004 REST API.
+        Uses 0 MB server memory and avoids PyTorch/SentenceTransformers overhead on Render.
+        """
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        if not gemini_key:
+            raise ValueError("GEMINI_API_KEY is not configured.")
+
+        import httpx
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents?key={gemini_key}"
+        all_embeddings = []
+        batch_size = 20
+
+        for i in range(0, len(documents), batch_size):
+            chunk_batch = documents[i : i + batch_size]
+            requests_payload = [
+                {
+                    "model": "models/text-embedding-004",
+                    "content": {"parts": [{"text": str(doc)[:8000]}]}
+                }
+                for doc in chunk_batch
+            ]
+
+            with httpx.Client(timeout=30.0) as client:
+                res = client.post(url, json={"requests": requests_payload})
+                if res.status_code != 200:
+                    raise RuntimeError(f"Gemini embedding API returned HTTP {res.status_code}: {res.text}")
+                data = res.json()
+                for item in data.get("embeddings", []):
+                    all_embeddings.append(item.get("values", []))
+
+        return all_embeddings
+
+    # ========================================================
+    # LAZY MODEL INITIALIZATION (LOCAL SENTENCETRANSFORMER)
     # ========================================================
 
     @property
@@ -108,20 +149,24 @@ class EmbeddingService:
     ) -> list[list[float]]:
         """
         Create embeddings for multiple documents in small batches.
-        Uses torch.inference_mode() to avoid building graph memory.
+        Uses Gemini API if available (0 MB RAM), otherwise PyTorch inference.
         """
-
         if not documents:
             return []
 
+        # Step 1: Attempt ultra-lightweight Gemini API if key is available
+        if os.getenv("GEMINI_API_KEY"):
+            try:
+                return self._embed_gemini(documents)
+            except Exception as gemini_err:
+                print(f"Gemini cloud embedding failed: {gemini_err}. Falling back to local SentenceTransformer...")
+
+        # Step 2: Fall back to local SentenceTransformer
         import torch
 
         all_embeddings = []
         total_documents = len(documents)
 
-        # ----------------------------------------------------
-        # Process documents batch-by-batch
-        # ----------------------------------------------------
         with torch.inference_mode():
             for start in range(0, total_documents, self.batch_size):
                 end = min(start + self.batch_size, total_documents)
@@ -156,12 +201,21 @@ class EmbeddingService:
         """
         Create an embedding for a user query.
         """
-
         if not query or not query.strip():
             raise ValueError(
                 "Query cannot be empty."
             )
 
+        # Step 1: Attempt ultra-lightweight Gemini API if key is available
+        if os.getenv("GEMINI_API_KEY"):
+            try:
+                results = self._embed_gemini([query])
+                if results and len(results) > 0:
+                    return results[0]
+            except Exception as gemini_err:
+                print(f"Gemini cloud query embedding failed: {gemini_err}. Falling back to local model...")
+
+        # Step 2: Fall back to local SentenceTransformer
         import torch
 
         with torch.inference_mode():
