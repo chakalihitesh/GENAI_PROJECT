@@ -53,7 +53,8 @@ export function initFirebase() {
             const apiBase = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
                 ? ((window.location.port === "8000" || window.location.port === "") ? "" : "http://127.0.0.1:8000")
                 : "https://codelense-backend.onrender.com";
-            const res = await fetch(`${apiBase}/api/auth/config`);
+            const cleanBase = apiBase.replace(/\/+$/, "");
+            const res = await fetch(`${cleanBase}/api/auth/config`);
             if (res.ok) {
                 const serverConfig = await res.json();
                 if (serverConfig.apiKey && serverConfig.apiKey !== "") {

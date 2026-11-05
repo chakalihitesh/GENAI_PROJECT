@@ -1,11 +1,14 @@
 const CODELENS_API_BASE = (function() {
     const host = window.location.hostname;
+    let base = "";
     // Local development:
     if (host === "localhost" || host === "127.0.0.1") {
-        return (window.location.port === "8000" || window.location.port === "") ? "" : "http://127.0.0.1:8000";
+        base = (window.location.port === "8000" || window.location.port === "") ? "" : "http://127.0.0.1:8000";
+    } else {
+        // Remote deployment (Vercel, custom domain, etc.): point to Render backend
+        base = "https://codelense-backend.onrender.com";
     }
-    // Remote deployment (Vercel, custom domain, etc.): point to Render backend
-    return "https://codelense-backend.onrender.com";
+    return base.replace(/\/+$/, "");
 })();
 const CURRENT_REPOSITORY_KEY = "codelens_current_repository";
 const HISTORY_KEY = "codelens_history";
@@ -42,6 +45,114 @@ function apiError(data, fallback) {
     if (typeof data.detail === "string" && data.detail.trim()) return data.detail;
     if (typeof data.message === "string" && data.message.trim()) return data.message;
     return fallback;
+}
+
+function clearCurrentRepository() {
+    currentRepository = null;
+    try {
+        localStorage.removeItem(CURRENT_REPOSITORY_KEY);
+    } catch (_) {}
+
+    setText("currentRepositoryName", "No repository loaded");
+    setText("currentRepositoryFileCount", "0 files");
+    setText("breadcrumbRepositoryName", "No repository");
+    setText("heroRepositoryName", "CodeLens AI");
+    setText("heroRepositoryFileCount", "0");
+    setText("fileCount", "0");
+    setText("repositoryStatusText", "No active repository");
+
+    const badgeContainer = document.getElementById("techBadges");
+    if (badgeContainer) badgeContainer.innerHTML = "";
+    const techSection = document.getElementById("techStackSection");
+    if (techSection) techSection.hidden = true;
+
+    renderRepositoryFiles([]);
+}
+
+function categorizeError(error, response, data) {
+    // 1. Timeout error (AbortController timeout or request timeout)
+    if (error && (error.name === "AbortError" || error.name === "TimeoutError" || (error.message && error.message.toLowerCase().includes("timeout")))) {
+        return {
+            type: "timeout",
+            message: "The request to CodeLens backend timed out. The server may still be spinning up from cold sleep or the query took too long.",
+            hint: "Please wait a moment and try asking again."
+        };
+    }
+
+    // 2. Network error (TypeError: Failed to fetch, offline, DNS failure)
+    if (error && (error.name === "TypeError" || error.message === "Failed to fetch" || (error.message && error.message.toLowerCase().includes("networkerror")))) {
+        return {
+            type: "network",
+            message: "Unable to connect to CodeLens backend. The server may be waking up (cold start) or unreachable. Please wait 15–20 seconds and try again.",
+            hint: "Please check that the backend is running and try again."
+        };
+    }
+
+    // 3. HTTP status responses
+    if (response) {
+        const status = response.status;
+        const serverDetail = apiError(data, "");
+
+        if (status === 404) {
+            return {
+                type: "404",
+                message: serverDetail || "Repository not found on server. The server may have restarted or reset its temporary storage.",
+                hint: "Please click '+ New repository' to re-import or upload your project."
+            };
+        }
+
+        if (status === 400 || status === 422) {
+            return {
+                type: "client_error",
+                message: serverDetail || "Invalid request. Please check your query or input.",
+                hint: null
+            };
+        }
+
+        if (status === 502 || status === 503) {
+            return {
+                type: "cold_start",
+                message: "CodeLens backend is currently waking up (cold start) or temporarily unavailable.",
+                hint: "Render free tier services spin down after inactivity. Please wait 15–20 seconds and try again."
+            };
+        }
+
+        if (status === 504) {
+            return {
+                type: "timeout",
+                message: "Backend request timed out (504 Gateway Timeout). The query took too long to complete.",
+                hint: "Please try asking a more specific question."
+            };
+        }
+
+        if (status >= 500) {
+            return {
+                type: "5xx",
+                message: serverDetail || `CodeLens backend encountered an error (HTTP ${status}) while processing your question.`,
+                hint: "Please try again in a few moments."
+            };
+        }
+
+        if (serverDetail) {
+            return {
+                type: "generic",
+                message: serverDetail,
+                hint: null
+            };
+        }
+    }
+
+    return {
+        type: "unknown",
+        message: error?.message || "Unable to reach CodeLens.",
+        hint: null
+    };
+}
+
+function warmupBackend() {
+    try {
+        fetch(`${CODELENS_API_BASE}/health`, { method: "GET" }).catch(() => {});
+    } catch (_) {}
 }
 
 function escapeHtml(value) {
@@ -133,6 +244,9 @@ document.addEventListener("DOMContentLoaded", () => {
         saveCurrentRepository(saved);
         updateRepositoryUI(saved);
     }
+
+    // Warm up backend in the background so Render cold-start finishes sooner
+    warmupBackend();
 });
 
 function initializeSidebar() {
@@ -909,7 +1023,10 @@ async function askCodeLens(
             "Upload a repository before asking questions.",
             true
         );
+        return;
+    }
 
+    if (isBusy) {
         return;
     }
 
@@ -928,73 +1045,124 @@ async function askCodeLens(
     const thinking =
         appendThinkingMessage();
 
+    const MAX_RETRIES = 2; // Up to 3 attempts (initial + 2 retries)
+    const RETRY_DELAYS = [3000, 6000];
+    let finalOutcome = null;
+
     try {
-        const response = await fetch(
-            `${CODELENS_API_BASE}/api/repositories/${encodeURIComponent(repository.repository_id)}/ask`,
-            {
-                method: "POST",
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-                body: JSON.stringify({
-                    question,
-                    top_k: 5
-                })
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            let response = null;
+            let data = null;
+            let fetchError = null;
+
+            const controller = new AbortController();
+            // 45s timeout per attempt to accommodate Render container wake-up latency
+            const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+            try {
+                response = await fetch(
+                    `${CODELENS_API_BASE}/api/repositories/${encodeURIComponent(repository.repository_id)}/ask`,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            question,
+                            top_k: 5
+                        }),
+                        signal: controller.signal
+                    }
+                );
+                data = await readApiResponse(response);
+            } catch (err) {
+                fetchError = err;
+            } finally {
+                clearTimeout(timeoutId);
             }
-        );
 
-        const data =
-            await readApiResponse(
-                response
-            );
+            // 1. Success
+            if (response && response.ok) {
+                thinking.remove();
 
-        thinking.remove();
+                appendAssistantMessage(
+                    data.answer ||
+                    "I couldn't find enough evidence in the uploaded repository."
+                );
 
-        if (!response.ok) {
-            if (response.status === 404) {
-                // If repository is missing on server (e.g. Render spin-down), clear stale repository from localStorage
-                localStorage.removeItem(CURRENT_REPOSITORY_KEY);
-                currentRepository = null;
+                updateSourcesSection(
+                    data.sources || [],
+                    data.retrieved_chunks || []
+                );
+
+                addConversationToHistory(
+                    repository.repository_id,
+                    repository.name,
+                    question
+                );
+
+                return;
             }
-            throw new Error(
-                apiError(
-                    data,
-                    "CodeLens could not answer the question."
-                )
-            );
+
+            // 2. Repository not found on server (404)
+            if (response && response.status === 404) {
+                clearCurrentRepository();
+                thinking.remove();
+                const categorized = categorizeError(null, response, data);
+                appendErrorMessage(categorized.message, categorized.hint);
+                return;
+            }
+
+            // 3. Client errors (400, 422)
+            if (response && (response.status === 400 || response.status === 422)) {
+                thinking.remove();
+                const categorized = categorizeError(null, response, data);
+                appendErrorMessage(categorized.message, categorized.hint);
+                return;
+            }
+
+            // 4. Cold start / Network error (TypeError, timeout, 502, 503, 504)
+            const isColdStart = fetchError || (response && (response.status === 502 || response.status === 503 || response.status === 504));
+
+            if (isColdStart && attempt < MAX_RETRIES) {
+                const delayMs = RETRY_DELAYS[attempt] || 4000;
+                const seconds = Math.round(delayMs / 1000);
+
+                const bubble = thinking ? thinking.querySelector(".message-bubble") : null;
+                if (bubble) {
+                    bubble.innerHTML = `
+                        <div style="display: inline-flex; align-items: center; gap: 8px;">
+                            <i data-lucide="loader-circle" class="codelens-spinner"></i>
+                            <span>CodeLens backend is waking up (cold start)... Retrying in ${seconds}s (attempt ${attempt + 1}/${MAX_RETRIES})</span>
+                        </div>
+                    `;
+                    refreshIcons();
+                }
+
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+                continue;
+            }
+
+            // All attempts exhausted or other server error
+            finalOutcome = { error: fetchError, response, data };
+            break;
         }
 
-        appendAssistantMessage(
-            data.answer ||
-            "I couldn't find enough evidence in the uploaded repository."
-        );
-
-        updateSourcesSection(
-            data.sources || [],
-            data.retrieved_chunks || []
-        );
-
-        addConversationToHistory(
-            repository.repository_id,
-            repository.name,
-            question
-        );
-
-    } catch (error) {
         thinking.remove();
-
-        let displayMsg = error.message || "Unable to reach CodeLens.";
-        if (displayMsg === "Failed to fetch" || error.name === "TypeError") {
-            displayMsg = "Unable to connect to CodeLens backend. The server may be waking up (cold start) or unreachable. Please wait 15-20 seconds and try again.";
-        }
-
-        appendErrorMessage(displayMsg);
-
-        console.error(
-            "CodeLens request error:",
-            error
+        const categorized = categorizeError(
+            finalOutcome?.error,
+            finalOutcome?.response,
+            finalOutcome?.data
         );
+        appendErrorMessage(categorized.message, categorized.hint);
+
+        console.error("CodeLens request failed:", finalOutcome);
+
+    } catch (unhandled) {
+        thinking.remove();
+        const categorized = categorizeError(unhandled, null, null);
+        appendErrorMessage(categorized.message, categorized.hint);
+        console.error("Unhandled CodeLens chat error:", unhandled);
 
     } finally {
         isBusy = false;
@@ -1097,7 +1265,7 @@ function appendAssistantMessage(answer) {
     scrollChatToBottom();
 }
 
-function appendErrorMessage(message) {
+function appendErrorMessage(message, hint = null) {
     const container =
         getChatMessages();
 
@@ -1111,16 +1279,17 @@ function appendErrorMessage(message) {
     article.className =
         "chat-message assistant-message";
 
+    const hintHtml = hint
+        ? `<div class="assistant-error-hint">${escapeHtml(hint)}</div>`
+        : "";
+
     article.innerHTML = `
         <div class="assistant-avatar"><span></span></div>
         <div class="message-content">
             <div class="message-role">CodeLens Assistant</div>
             <div class="message-bubble assistant-error">
                 ${escapeHtml(message)}
-
-                <div class="assistant-error-hint">
-                    Please check that the backend is running and try again.
-                </div>
+                ${hintHtml}
             </div>
         </div>
     `;

@@ -77,10 +77,13 @@ app.add_middleware(
         "http://localhost:5500",
         "http://127.0.0.1:8000",
         "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
         "https://genaiproject-frontend.vercel.app",
         "https://genai-project-frontend.vercel.app",
+        "https://codelense-backend.onrender.com",
     ],
-    allow_origin_regex=r"^https?://.*",
+    allow_origin_regex=r"^https://([a-zA-Z0-9_-]+\.)*vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -127,15 +130,18 @@ class SearchRequest(BaseModel):
 # ROOT / HEALTH
 # ============================================================
 
+@app.get("/")
 @app.get("/api")
 def root():
     return {
         "message": "CodeLens AI backend is running.",
         "version": "1.0.0",
+        "status": "healthy",
     }
 
 
 @app.get("/health")
+@app.get("/api/health")
 def health():
     return {
         "status": "healthy",
