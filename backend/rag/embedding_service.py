@@ -59,14 +59,12 @@ class EmbeddingService:
                     import torch
                     from sentence_transformers import SentenceTransformer
 
-                    # Restrict PyTorch CPU worker threads to 1 to reduce threadpool RAM
-                    try:
-                        torch.set_num_threads(1)
-                        torch.set_num_interop_threads(1)
-                    except Exception:
-                        pass
+# PyTorch thread constraints handled safely via config.py (OMP_NUM_THREADS=1)
 
-                    loaded = SentenceTransformer(self.model_name)
+                    try:
+                        loaded = SentenceTransformer(self.model_name, local_files_only=True)
+                    except Exception:
+                        loaded = SentenceTransformer(self.model_name)
                     if hasattr(loaded, "eval"):
                         loaded.eval()
 

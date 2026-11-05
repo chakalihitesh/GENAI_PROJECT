@@ -146,6 +146,13 @@ IGNORED_FILES = {
     ".env.local",
     ".env.production",
     ".env.development",
+    ".env.staging",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "poetry.lock",
+    "cargo.lock",
+    "composer.lock",
 }
 
 
@@ -352,6 +359,24 @@ def extract_repository_zip(
                 nested_destination = nested_zip.parent / "source"
                 safe_extract_zip(nested_zip, nested_destination)
 
+        # If the archive unpacked into a single top-level directory (e.g. GitHub zipballs: repo-main/)
+        # promote its contents up to repository_dir so paths are clean and not deeply nested.
+        root_entries = [p for p in repository_dir.iterdir() if p.resolve() != zip_path.resolve()]
+        if len(root_entries) == 1 and root_entries[0].is_dir():
+            single_dir = root_entries[0]
+            for child in list(single_dir.iterdir()):
+                target = repository_dir / child.name
+                if target.exists():
+                    if target.is_dir():
+                        shutil.rmtree(target, ignore_errors=True)
+                    else:
+                        target.unlink(missing_ok=True)
+                shutil.move(str(child), str(target))
+            try:
+                single_dir.rmdir()
+            except OSError:
+                pass
+
     except zipfile.BadZipFile as exc:
         raise ValueError("The uploaded file is not a valid ZIP archive") from exc
 
@@ -433,8 +458,19 @@ def is_supported_file(
     Determine whether a file should be processed by CodeLens.
     """
 
-    # Ignore known unwanted filenames.
-    if file_path.name.lower() in IGNORED_FILES:
+    lower_name = file_path.name.lower()
+
+    # Ignore known unwanted filenames (including lockfiles)
+    if lower_name in IGNORED_FILES:
+        return False
+
+    # Ignore minified bundles, maps, and pre-compiled assets
+    if (
+        lower_name.endswith(".min.js")
+        or lower_name.endswith(".min.css")
+        or lower_name.endswith(".bundle.js")
+        or lower_name.endswith(".map")
+    ):
         return False
 
     # Ignore files inside ignored directories.

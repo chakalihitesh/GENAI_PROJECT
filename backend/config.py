@@ -34,11 +34,13 @@ if BACKEND_ENV_PATH.exists():
 DATA_DIR = PROJECT_ROOT / "data"
 REPOSITORIES_DIR = DATA_DIR / "repositories"
 CHROMA_DIR = DATA_DIR / "chroma_db"
+METADATA_DIR = DATA_DIR / "metadata"
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
 # Create required directories
 REPOSITORIES_DIR.mkdir(parents=True, exist_ok=True)
 CHROMA_DIR.mkdir(parents=True, exist_ok=True)
+METADATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # AI API Keys
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")

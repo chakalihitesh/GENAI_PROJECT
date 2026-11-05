@@ -588,6 +588,23 @@ def chunk_file(
     if file_size == 0:
         return []
 
+    lower_name = file_path.name.lower()
+    if (
+        lower_name in {
+            "package-lock.json",
+            "yarn.lock",
+            "pnpm-lock.yaml",
+            "poetry.lock",
+            "cargo.lock",
+            "composer.lock",
+        }
+        or lower_name.endswith(".min.js")
+        or lower_name.endswith(".min.css")
+        or lower_name.endswith(".bundle.js")
+        or lower_name.endswith(".map")
+    ):
+        return []
+
     # --------------------------------------------------------
     # Large-file handling
     # --------------------------------------------------------

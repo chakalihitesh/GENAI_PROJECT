@@ -101,6 +101,14 @@ function categorizeError(error, response, data) {
             };
         }
 
+        if (status === 409) {
+            return {
+                type: 'conflict',
+                message: serverDetail || 'Repository indexing is currently in progress. Please wait for indexing to finish before asking questions.',
+                hint: 'Watch the progress bar at the top until it reaches 100% (Completed).'
+            };
+        }
+
         if (status === 400 || status === 422) {
             return {
                 type: "client_error",
@@ -560,7 +568,7 @@ function updateStagePills(stage) {
 
     clear();
 
-    if (stage === "scanning") {
+    if (stage === "scanning" || stage === "cloning" || stage === "extracting" || stage === "pending" || stage === "uploaded") {
         s1?.classList.add("active");
     } else if (stage === "chunking") {
         s1?.classList.add("done");
@@ -710,7 +718,7 @@ async function handleRepositoryProcess(params) {
 
                     if (!pRes.ok) {
                         consecutiveErrors++;
-                        if (consecutiveErrors >= 5) {
+                        if (consecutiveErrors >= 10) {
                             console.warn("Too many consecutive progress polling errors. Stopping poller.");
                             stopPolling();
                         }

@@ -26,7 +26,7 @@ data/chroma_db/
 data/chroma/
 
 # Uploaded repositories / generated repository data
-data/repositories/
+data/
 data/uploads/
 
 # Backend generated uploads

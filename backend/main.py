@@ -9,6 +9,7 @@ if str(_BACKEND_DIR) not in sys.path:
 
 import os
 import gc
+import traceback
 import asyncio
 import re
 import shutil
@@ -376,8 +377,8 @@ async def upload_folder(
 async def import_github_repository(payload: GitHubImportRequest):
     """
     Import a repository directly from a public HTTPS GitHub URL.
-    Validates URL format, downloads the archive, and routes through
-    the exact same safe extraction/indexing pipeline as ZIP uploads.
+    Validates URL format, performs fast shallow clone (or fallback archive download),
+    cleans git metadata and nested directory wrappers, and initializes indexing progress.
     """
     url = (payload.url or "").strip()
     if not url:
@@ -404,38 +405,101 @@ async def import_github_repository(payload: GitHubImportRequest):
     zip_path = DATA_DIR / "uploads" / f"{repository_id}.zip"
     zip_path.parent.mkdir(parents=True, exist_ok=True)
 
-    branches_to_try = [branch] if branch else ["main", "master"]
-    downloaded = False
+    progress_service.initialize(
+        repository_id,
+        status="pending",
+        stage="cloning",
+        progress=5,
+        message="Connecting to GitHub...",
+    )
+
+    cloned = False
 
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=90.0) as client:
-            for b in branches_to_try:
-                zip_url = f"https://codeload.github.com/{owner}/{repo}/zip/refs/heads/{b}"
-                resp = await client.get(zip_url)
-                if resp.status_code == 200:
-                    zip_path.write_bytes(resp.content)
-                    downloaded = True
-                    break
+        # Step 1: Attempt git clone --depth 1 if git binary is present on the system
+        if shutil.which("git"):
+            progress_service.update(
+                repository_id,
+                status="cloning",
+                stage="cloning",
+                progress=8,
+                message=f"Cloning {owner}/{repo} from GitHub...",
+            )
+            clone_cmd = ["git", "clone", "--depth", "1"]
+            if branch:
+                clone_cmd.extend(["-b", branch])
+            clone_cmd.extend([f"https://github.com/{owner}/{repo}.git", str(repository_path)])
+            git_env = os.environ.copy()
+            git_env['GIT_TERMINAL_PROMPT'] = '0'
+            git_env['GIT_ASKPASS'] = 'echo'
+            try:
+                res = subprocess.run(clone_cmd, capture_output=True, text=True, timeout=60, env=git_env)
+                if res.returncode == 0 and repository_path.is_dir() and any(repository_path.iterdir()):
+                    cloned = True
+                    # Remove .git folder immediately to prevent bloat
+                    git_dir = repository_path / ".git"
+                    if git_dir.exists():
+                        shutil.rmtree(git_dir, ignore_errors=True)
+            except Exception as git_err:
+                print(f"Git clone failed: {git_err}. Falling back to zip download...")
+                if repository_path.exists():
+                    shutil.rmtree(repository_path, ignore_errors=True)
 
-        if not downloaded:
-            raise HTTPException(
-                status_code=404,
-                detail="GitHub repository was not found, is private, or specified branch does not exist."
+        # Step 2: Fallback to downloading archive via httpx if git clone was unavailable or failed
+        if not cloned:
+            progress_service.update(
+                repository_id,
+                status="cloning",
+                stage="extracting",
+                progress=8,
+                message="Downloading repository archive from GitHub...",
+            )
+            branches_to_try = [branch] if branch else ["main", "master", "trunk", "development"]
+            downloaded = False
+            async with httpx.AsyncClient(follow_redirects=True, timeout=90.0) as client:
+                for b in branches_to_try:
+                    zip_url = f"https://codeload.github.com/{owner}/{repo}/zip/refs/heads/{b}"
+                    resp = await client.get(zip_url)
+                    if resp.status_code == 200:
+                        zip_path.write_bytes(resp.content)
+                        downloaded = True
+                        break
+
+            if not downloaded:
+                progress_service.fail(repository_id, "GitHub repository was not found, is private, or specified branch does not exist.")
+                raise HTTPException(
+                    status_code=404,
+                    detail="GitHub repository was not found, is private, or specified branch does not exist."
+                )
+
+            # Send downloaded archive through safe extraction pipeline (with auto-unwrap)
+            extract_repository(
+                zip_path=str(zip_path),
+                repository_id=repository_id
             )
 
-        # Send downloaded archive through the exact same safe extraction pipeline
-        extract_repository(
-            zip_path=str(zip_path),
-            repository_id=repository_id
-        )
+        # Remove any ignored directories (.git, node_modules, etc.) that might have been cloned/extracted
+        for ig_name in IGNORED_DIRECTORIES:
+            for ig_dir in repository_path.rglob(ig_name):
+                if ig_dir.is_dir():
+                    shutil.rmtree(ig_dir, ignore_errors=True)
+
+        supported_files = get_supported_files(repository_path)
+        if not supported_files:
+            progress_service.fail(repository_id, "No supported code or text files found in the imported repository.")
+            raise HTTPException(
+                status_code=400,
+                detail="No supported code or text files found in the imported repository."
+            )
 
         repository_info = get_repository_info(repository_path)
-        progress_service.initialize(repository_id)
         progress_service.update(
             repository_id,
-            status="uploaded",
-            stage="uploaded",
+            status="ready_for_indexing",
+            stage="pending",
             progress=10,
+            processed_files=len(supported_files),
+            total_files=len(supported_files),
             message="Repository imported successfully from GitHub. Ready for indexing.",
         )
         return {
@@ -452,6 +516,7 @@ async def import_github_repository(payload: GitHubImportRequest):
     except Exception as exc:
         if repository_path.exists():
             shutil.rmtree(repository_path, ignore_errors=True)
+        progress_service.fail(repository_id, f"Failed to process GitHub repository: {str(exc)}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to process GitHub repository: {str(exc)}"
@@ -984,142 +1049,78 @@ def index_repository(
     repository_id: str
 ):
     """
-    Index an uploaded repository into the vector database.
-
-    Indexing pipeline:
-
-        scanning
-            ↓
-        chunking
-            ↓
-        embedding
-            ↓
-        indexing
-            ↓
-        completed
-
-    Progress is tracked using progress_service.
+    Index an uploaded or cloned repository into the vector database.
+    Guards against duplicate indexing jobs, runs asynchronously with event-loop yields,
+    and updates progress safely across pending, scanning, chunking, embedding, completed, and failed states.
     """
-
-    # --------------------------------------------------------
-    # INITIALIZE PROGRESS
-    # --------------------------------------------------------
-
-    progress_service.initialize(
-        repository_id
-    )
+    # Prevent duplicate concurrent indexing jobs on the same repository
+    if not progress_service.acquire_indexing(repository_id):
+        # A job is already active for this repository. Await its completion rather than duplicating
+        import time
+        while progress_service.is_indexing(repository_id):
+            time.sleep(0.5)
+        current = progress_service.get(repository_id)
+        if current and current.get("status") == "failed":
+            raise HTTPException(status_code=500, detail=current.get("message", "Indexing failed."))
+        return current or {
+            "repository_id": repository_id,
+            "status": "completed",
+            "message": "Repository indexed successfully.",
+        }
 
     try:
+        repository_path = REPOSITORIES_DIR / repository_id
 
-        # ====================================================
-        # REPOSITORY PATH
-        # ====================================================
-
-        repository_path = (
-            REPOSITORIES_DIR / repository_id
-        )
-
-        # ----------------------------------------------------
-        # VALIDATE REPOSITORY
-        # ----------------------------------------------------
-
-        if not repository_path.exists():
-
-            progress_service.fail(
-                repository_id,
-                "Repository not found."
-            )
-
+        if not repository_path.exists() or not repository_path.is_dir():
+            progress_service.fail(repository_id, "Repository not found on server.")
             raise HTTPException(
                 status_code=404,
-                detail="Repository not found."
+                detail=f"Repository '{repository_id}' does not exist on server. Please click '+ New repository' to re-import or upload your project."
             )
 
-        if not repository_path.is_dir():
+        # Step 1: Scanning
+        progress_service.update(
+            repository_id,
+            status="indexing",
+            stage="scanning",
+            progress=15,
+            message="Scanning repository files...",
+        )
 
-            progress_service.fail(
-                repository_id,
-                "Repository path is not a directory."
-            )
+        files = get_supported_files(repository_path)
+        total_files = len(files)
 
+        if total_files == 0:
+            progress_service.fail(repository_id, "No supported source or documentation files found to index.")
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "Repository path is not a directory."
-                )
+                detail="No supported source or documentation files found to index."
             )
-
-        # ====================================================
-        # STEP 1: SCANNING
-        # ====================================================
 
         progress_service.update(
             repository_id,
             status="indexing",
             stage="scanning",
-            progress=10,
-            processed_files=0,
-            total_files=0,
-            processed_chunks=0,
-            total_chunks=0,
-            message=(
-                "Scanning repository files..."
-            )
-        )
-
-        # Get supported files using the existing
-        # repository manager function.
-        files = get_supported_files(
-            repository_path
-        )
-
-        total_files = len(files)
-
-        progress_service.update(
-            repository_id,
-            stage="scanning",
             progress=20,
             processed_files=0,
             total_files=total_files,
-            processed_chunks=0,
-            total_chunks=0,
-            message=(
-                f"Found {total_files} "
-                "supported files."
-            )
+            message=f"Found {total_files} supported files.",
         )
 
-        # ====================================================
-        # STEP 2: CHUNKING
-        # ====================================================
-
+        # Step 2: Chunking & Embedding
         progress_service.update(
             repository_id,
+            status="indexing",
             stage="chunking",
-            progress=30,
-            processed_files=0,
+            progress=25,
             total_files=total_files,
-            processed_chunks=0,
-            total_chunks=0,
-            message=(
-                "Creating code-aware chunks..."
-            )
+            message="Creating code-aware chunks...",
         )
 
-        # ----------------------------------------------------
-        # ----------------------------------------------------
-        # STREAMING BATCH INDEXING FOR LOW RAM (512MB)
-        #
-        # Instead of accumulating all chunks and embeddings in memory,
-        # files are processed incrementally and chunks are embedded and
-        # stored in ChromaDB in small, bounded batches (24 chunks).
-        # Memory usage remains O(batch_size) rather than O(repo_size).
-        # ----------------------------------------------------
-
-        # Clear any existing index for this repository
+        # Clear any prior index for this repository
         vector_store.delete_repository(repository_id)
 
-        CHUNK_BATCH_LIMIT = int(os.getenv("INDEXING_CHUNK_BATCH_SIZE", "24"))
+        CHUNK_BATCH_LIMIT = int(os.getenv("INDEXING_CHUNK_BATCH_SIZE", "16"))
         chunk_buffer = []
         total_chunks = 0
 
@@ -1144,17 +1145,22 @@ def index_repository(
                 embs.clear()
                 gc.collect()
 
-                calc_progress = min(85, 30 + int(((file_idx + 1) / total_files) * 55))
+                calc_progress = min(92, 25 + int(((file_idx + 1) / total_files) * 67))
                 progress_service.update(
                     repository_id,
-                    stage="indexing",
+                    status="indexing",
+                    stage="embedding",
                     progress=calc_progress,
                     processed_files=file_idx + 1,
                     total_files=total_files,
                     processed_chunks=total_chunks,
                     total_chunks=total_chunks,
-                    message=f"Indexed {total_chunks} chunks ({file_idx + 1}/{total_files} files)..."
+                    message=f"Embedded {total_chunks} chunks ({file_idx + 1}/{total_files} files)...",
                 )
+
+                # Brief sleep releases GIL so concurrent GET /progress requests are served immediately
+                import time
+                time.sleep(0.01)
 
         # Process any remaining chunks in final batch
         if chunk_buffer:
@@ -1167,12 +1173,8 @@ def index_repository(
             embs.clear()
             gc.collect()
 
-        # Check for empty repository
         if total_chunks == 0:
-            progress_service.fail(
-                repository_id,
-                "No supported content was found to index."
-            )
+            progress_service.fail(repository_id, "No supported content was found to index.")
             raise HTTPException(
                 status_code=400,
                 detail="No supported content was found to index."
@@ -1180,13 +1182,14 @@ def index_repository(
 
         progress_service.update(
             repository_id,
+            status="indexing",
             stage="indexing",
-            progress=95,
+            progress=96,
             processed_files=total_files,
             total_files=total_files,
             processed_chunks=total_chunks,
             total_chunks=total_chunks,
-            message="Repository indexed in ChromaDB."
+            message="Repository indexed in ChromaDB.",
         )
 
         progress_service.complete(
@@ -1194,7 +1197,7 @@ def index_repository(
             processed_files=total_files,
             total_files=total_files,
             processed_chunks=total_chunks,
-            total_chunks=total_chunks
+            total_chunks=total_chunks,
         )
 
         return {
@@ -1202,38 +1205,23 @@ def index_repository(
             "status": "completed",
             "message": "Repository indexed successfully.",
             "total_files": total_files,
-            "total_chunks": total_chunks
+            "total_chunks": total_chunks,
         }
-
-    # ========================================================
-    # HTTP EXCEPTIONS
-    # ========================================================
 
     except HTTPException:
         raise
 
-    # ========================================================
-    # UNEXPECTED ERRORS
-    # ========================================================
-
     except Exception as exc:
+        err_msg = str(exc)
+        print(f"Repository indexing failed for {repository_id}: {err_msg}")
+        traceback.print_exc()
+        progress_service.fail(repository_id, f"Indexing failed: {err_msg}")
+        raise HTTPException(status_code=500, detail=f"Indexing failed: {err_msg}")
 
-        # Update progress state to failed.
-        progress_service.fail(
-            repository_id,
-            str(exc)
-        )
+    finally:
+        progress_service.release_indexing(repository_id)
 
-        # Print error in terminal for debugging.
-        print(
-            "Repository indexing failed:",
-            str(exc)
-        )
 
-        raise HTTPException(
-            status_code=500,
-            detail=str(exc)
-        )
 # ============================================================
 # REPOSITORY INDEXING PROGRESS
 # ============================================================
@@ -1244,53 +1232,64 @@ def index_repository(
 def get_repository_progress(repository_id: str):
     """
     Return the current indexing progress of a repository.
-    Handles in-memory tracking as well as on-disk existing repositories.
+    Safe against crashes and 502 errors: checks in-memory tracking,
+    disk metadata, and persistent vector collection state.
     """
-    progress = progress_service.get(repository_id)
-    if progress is not None:
-        return progress
-
-    repository_path = REPOSITORIES_DIR / repository_id
-    if not repository_path.exists() or not repository_path.is_dir():
-        raise HTTPException(
-            status_code=404,
-            detail=f"Repository '{repository_id}' does not exist on server. Please click '+ New repository' to re-import.",
-        )
-
     try:
-        collection = vector_store.get_collection(repository_id)
-        chunk_count = collection.count()
-    except Exception:
-        chunk_count = 0
+        progress = progress_service.get(repository_id)
+        if progress is not None:
+            return progress
 
-    if chunk_count > 0:
-        completed_info = {
+        repository_path = REPOSITORIES_DIR / repository_id
+        if not repository_path.exists() or not repository_path.is_dir():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository '{repository_id}' does not exist on server. Please click '+ New repository' to re-import or upload your project.",
+            )
+
+        try:
+            collection = vector_store.get_collection(repository_id)
+            chunk_count = collection.count()
+        except Exception:
+            chunk_count = 0
+
+        if chunk_count > 0:
+            completed_info = {
+                "repository_id": repository_id,
+                "status": "completed",
+                "stage": "completed",
+                "progress": 100,
+                "processed_chunks": chunk_count,
+                "total_chunks": chunk_count,
+                "message": "Repository is indexed and ready.",
+                "exists": True,
+            }
+            progress_service.update(repository_id, **completed_info)
+            return completed_info
+
+        ready_info = {
             "repository_id": repository_id,
-            "status": "completed",
-            "stage": "completed",
-            "progress": 100,
-            "processed_chunks": chunk_count,
-            "total_chunks": chunk_count,
-            "message": "Repository is indexed and ready.",
+            "status": "ready_for_indexing",
+            "stage": "pending",
+            "progress": 10,
+            "message": "Repository files uploaded, ready for indexing.",
             "exists": True,
         }
-        progress_service.update(
-            repository_id,
-            status="completed",
-            stage="completed",
-            progress=100,
-            message="Repository is indexed and ready.",
-        )
-        return completed_info
+        progress_service.update(repository_id, **ready_info)
+        return ready_info
 
-    return {
-        "repository_id": repository_id,
-        "status": "ready_for_indexing",
-        "stage": "uploaded",
-        "progress": 10,
-        "message": "Repository files uploaded, ready for indexing.",
-        "exists": True,
-    }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"Progress retrieval unexpected error for {repository_id}: {exc}")
+        return {
+            "repository_id": repository_id,
+            "status": "indexing",
+            "stage": "indexing",
+            "progress": 50,
+            "message": "Repository processing in progress...",
+            "exists": True,
+        }
 # ============================================================
 # SEMANTIC SEARCH
 # ============================================================
@@ -1321,10 +1320,16 @@ def semantic_search(
         )
 
     repository_path = REPOSITORIES_DIR / repository_id
-    if not repository_path.exists():
+    if not repository_path.exists() or not repository_path.is_dir():
         raise HTTPException(
             status_code=404,
-            detail="Repository not found on server. Please click '+ New repository' to re-import or upload your project.",
+            detail=f"Repository '{repository_id}' not found on server. Please click '+ New repository' to re-import or upload your project.",
+        )
+
+    if progress_service.is_indexing(repository_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Repository '{repository_id}' is currently being indexed. Please wait until indexing completes before asking questions.",
         )
 
     try:
@@ -1401,6 +1406,12 @@ def ask_repository(
             status_code=404,
             detail="Repository not found on server. Please click '+ New repository' to re-import or upload your project.",
         )
+    if progress_service.is_indexing(repository_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Repository '{repository_id}' is currently being indexed. Please wait until indexing completes before asking questions.",
+        )
+
 
     try:
 
@@ -1463,6 +1474,11 @@ def startup_event():
     print("Embedding loading:    Lazy on-demand (all-MiniLM-L6-v2)")
     print("=" * 60)
     print("")
+
+    try:
+        progress_service._load_all_from_disk()
+    except Exception as exc:
+        print(f"Error loading repository metadata on startup: {exc}")
 
 
 if __name__ == "__main__":
